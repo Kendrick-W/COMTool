@@ -289,7 +289,7 @@ class AdvancedSerialTool(QMainWindow):
         button_layout.addWidget(load_mapping_btn)
         mapping_layout.addLayout(button_layout)
 
-        self.send_tabs.addTab(mapping_widget, "映射配置")
+        ##self.send_tabs.addTab(mapping_widget, "映射配置")
 
         # 默认发送框
 
@@ -387,15 +387,15 @@ class AdvancedSerialTool(QMainWindow):
         # 工具菜单
         tool_menu = menubar.addMenu("工具")
 
-        # 示例工具菜单项
-        example_tool_action = QAction("示例工具", self)
-        example_tool_action.triggered.connect(self.example_tool_function)
-        tool_menu.addAction(example_tool_action)
-
-        # 新增信号检测菜单项
+        # 信号检测菜单项
         signal_detection_action = QAction("信号检测", self)
         signal_detection_action.triggered.connect(self.open_signal_detection_window)
         tool_menu.addAction(signal_detection_action)
+        
+        # 映射配置菜单项
+        mapping_config_action = QAction("映射配置", self)
+        mapping_config_action.triggered.connect(self.create_mapping_config_window)
+        tool_menu.addAction(mapping_config_action)
 
         # 帮助菜单
         help_menu = menubar.addMenu("帮助")
@@ -418,36 +418,101 @@ class AdvancedSerialTool(QMainWindow):
             self.port_combo.setCurrentText(current_port)
 
     def open_signal_detection_window(self):
-        # 创建信号检测窗口类（示例）
+        # 创建信号检测窗口类
         class SignalDetectionWindow(QWidget):
             data_received = pyqtSignal(bytes)
             def __init__(self):
                 super().__init__()
                 self.setWindowTitle('信号检测')
-                self.setGeometry(200, 200, 800, 600)
+                self.setGeometry(200, 200, 1000, 800)
+                self.init_ui()
+                
+            def init_ui(self):
                 layout = QVBoxLayout()
+                
+                # 添加起始字节检测状态
+                status_layout = QHBoxLayout()
+                self.start_byte_label = QLabel('起始字节(5A)状态：')
+                self.start_byte_status = QLabel('未检测到')
+                self.start_byte_status.setStyleSheet('color: red')
+                status_layout.addWidget(self.start_byte_label)
+                status_layout.addWidget(self.start_byte_status)
+                status_layout.addStretch()
+                layout.addLayout(status_layout)
+                
+                # 创建表格
                 self.table = QTableWidget()
-                self.table.setRowCount(24)
-                self.table.setColumnCount(8)
-                self.table.setHorizontalHeaderLabels([f'I{i*8}-I{i*8 + 7}' for i in range(8)])
-                self.table.setVerticalHeaderLabels([f'D{i}' for i in range(24)])
+                self.table.setRowCount(24)  # D0-D23
+                self.table.setColumnCount(9)  # 8位数据 + 1列字节值
+                
+                # 设置表头
+                headers = ['Bit7', 'Bit6', 'Bit5', 'Bit4', 'Bit3', 'Bit2', 'Bit1', 'Bit0', '字节值(HEX)']
+                self.table.setHorizontalHeaderLabels(headers)
+                
+                # 设置垂直表头（D0-D23）和I标签说明
+                v_headers = []
                 for i in range(24):
-                    for j in range(8):
+                    v_headers.append(f'D{i} (I{i*8}-I{i*8+7})')
+                self.table.setVerticalHeaderLabels(v_headers)
+                
+                # 初始化表格内容
+                for i in range(24):
+                    for j in range(9):
                         item = QTableWidgetItem('0')
+                        item.setTextAlignment(Qt.AlignCenter)
                         self.table.setItem(i, j, item)
+                
+                # 设置表格样式
+                self.table.setStyleSheet('QTableWidget {gridline-color: #d0d0d0}')
+                self.table.horizontalHeader().setStretchLastSection(True)
+                self.table.verticalHeader().setDefaultSectionSize(30)
+                
+                # 自动调整列宽
+                self.table.resizeColumnsToContents()
+                
                 layout.addWidget(self.table)
                 self.setLayout(layout)
                 self.data_received.connect(self.update_table)
+                
             def update_table(self, data):
-                # 假设数据格式正确，更新表格数据
-                for i in range(min(24, len(data))):
-                    byte_data = data[i]
+                if not data:
+                    return
+                    
+                # 检查起始字节
+                if data[0] == 0x5A:
+                    self.start_byte_status.setText('已检测到')
+                    self.start_byte_status.setStyleSheet('color: green')
+                else:
+                    self.start_byte_status.setText('未检测到')
+                    self.start_byte_status.setStyleSheet('color: red')
+                    return
+                
+                # 更新表格数据
+                for i in range(min(24, len(data)-1)):  # 跳过起始字节5A
+                    byte_data = data[i+1]  # 数据从第二个字节开始
+                    
+                    # 更新8个位的值
                     for j in range(8):
-                        bit_value = (byte_data >> j) & 1
+                        bit_value = (byte_data >> (7-j)) & 1  # 从高位到低位
                         item = QTableWidgetItem(str(bit_value))
+                        item.setTextAlignment(Qt.AlignCenter)
+                        if bit_value == 1:
+                            item.setBackground(Qt.green)
+                        else:
+                            item.setBackground(Qt.white)
                         self.table.setItem(i, j, item)
+                    
+                    # 更新字节值（十六进制）
+                    hex_value = QTableWidgetItem(f'{byte_data:02X}')
+                    hex_value.setTextAlignment(Qt.AlignCenter)
+                    self.table.setItem(i, 8, hex_value)
+                    
         self.signal_detection_window = SignalDetectionWindow()
         self.signal_detection_window.show()
+        
+        # 连接数据接收信号
+        if hasattr(self, 'serial_thread') and self.serial_thread:
+            self.serial_thread.data_received.connect(self.signal_detection_window.data_received)
 
     def toggle_serial(self):
         """打开或关闭串口"""
@@ -556,14 +621,121 @@ class AdvancedSerialTool(QMainWindow):
             except Exception as e:
                 self.statusBar.showMessage(f"关闭串口错误: {str(e)}")
 
-    def update_bit_mapping(self, input_bit, output_bit):
+    def create_mapping_config_window(self):
+        """创建映射配置窗口"""
+        self.mapping_window = QWidget()
+        self.mapping_window.setWindowTitle('映射配置')
+        self.mapping_window.setGeometry(100, 100, 800, 600)
+        
+        layout = QVBoxLayout()
+        
+        # 添加说明标签
+        desc_label = QLabel('配置数据映射规则：')
+        layout.addWidget(desc_label)
+        
+        # 创建映射表格
+        self.mapping_table = QTableWidget()
+        self.mapping_table.setColumnCount(4)
+        self.mapping_table.setHorizontalHeaderLabels(['输入位', '输出位', '启用', '当前值'])
+        self.mapping_table.setRowCount(192)  # 支持192个位的映射
+        
+        # 初始化表格内容
+        for i in range(192):
+            # 输入位
+            input_label = QTableWidgetItem(f'I{i}')
+            input_label.setFlags(input_label.flags() & ~Qt.ItemIsEditable)
+            self.mapping_table.setItem(i, 0, input_label)
+            
+            # 输出位
+            output_spin = QSpinBox()
+            output_spin.setRange(0, 191)
+            output_spin.setValue(i)
+            output_spin.valueChanged.connect(lambda v, row=i: self.update_mapping(row, v))
+            self.mapping_table.setCellWidget(i, 1, output_spin)
+            
+            # 启用复选框
+            enable_check = QCheckBox()
+            enable_check.setChecked(True)
+            enable_check.stateChanged.connect(lambda state, row=i: self.toggle_mapping(row, state))
+            enable_widget = QWidget()
+            enable_layout = QHBoxLayout(enable_widget)
+            enable_layout.addWidget(enable_check)
+            enable_layout.setAlignment(Qt.AlignCenter)
+            enable_layout.setContentsMargins(0, 0, 0, 0)
+            self.mapping_table.setCellWidget(i, 2, enable_widget)
+            
+            # 当前值
+            value_label = QTableWidgetItem('0')
+            value_label.setFlags(value_label.flags() & ~Qt.ItemIsEditable)
+            value_label.setTextAlignment(Qt.AlignCenter)
+            self.mapping_table.setItem(i, 3, value_label)
+        
+        self.mapping_table.resizeColumnsToContents()
+        layout.addWidget(self.mapping_table)
+        
+        # 添加定时发送控制
+        timer_group = QGroupBox('定时发送设置')
+        timer_layout = QHBoxLayout()
+        
+        self.timer_enable = QCheckBox('启用定时发送')
+        self.timer_enable.stateChanged.connect(self.toggle_auto_send)
+        
+        self.timer_interval = QSpinBox()
+        self.timer_interval.setRange(100, 10000)  # 100ms到10s
+        self.timer_interval.setValue(1000)  # 默认1秒
+        self.timer_interval.setSuffix('ms')
+        
+        timer_layout.addWidget(self.timer_enable)
+        timer_layout.addWidget(QLabel('发送间隔：'))
+        timer_layout.addWidget(self.timer_interval)
+        timer_layout.addStretch()
+        
+        timer_group.setLayout(timer_layout)
+        layout.addWidget(timer_group)
+        
+        # 添加按钮组
+        button_layout = QHBoxLayout()
+        save_btn = QPushButton('保存配置')
+        load_btn = QPushButton('加载配置')
+        save_btn.clicked.connect(self.save_mapping_config)
+        load_btn.clicked.connect(self.load_mapping_config)
+        button_layout.addWidget(save_btn)
+        button_layout.addWidget(load_btn)
+        layout.addLayout(button_layout)
+        
+        self.mapping_window.setLayout(layout)
+        self.mapping_window.show()
+        
+    def update_mapping(self, input_bit, output_bit):
         """更新位映射配置"""
-        self.bit_mapping[input_bit] = output_bit
+        self.bit_mapping[str(input_bit)] = output_bit
 
-    def toggle_mapping(self, bit, enabled, spin_box):
+    def toggle_mapping(self, bit, enabled):
         """切换映射启用状态"""
-        self.bit_mapping_enabled[bit] = enabled
-        spin_box.setEnabled(enabled)  # 设置输出位文本框的可编辑状态
+        self.bit_mapping_enabled[str(bit)] = enabled == Qt.Checked
+        
+    def toggle_auto_send(self, state):
+        """切换定时发送状态"""
+        if state == Qt.Checked:
+            # 启动定时器
+            interval = self.timer_interval.value()
+            self.send_timer = QTimer()
+            self.send_timer.timeout.connect(self.auto_send_data)
+            self.send_timer.start(interval)
+        else:
+            # 停止定时器
+            if hasattr(self, 'send_timer'):
+                self.send_timer.stop()
+                
+    def auto_send_data(self):
+        """定时发送数据"""
+        if hasattr(self, 'last_received_data') and self.last_received_data:
+            # 处理数据并发送
+            processed_data = self.convert_data(self.last_received_data)
+            if processed_data:
+                self.ser.write(processed_data)
+                # 更新映射表格中的当前值
+                self.update_mapping_values(processed_data)
 
     def save_mapping_config(self):
         """保存映射配置到文件"""
@@ -613,8 +785,8 @@ class AdvancedSerialTool(QMainWindow):
         if len(input_data) == 0:
             return bytearray()
 
-        # 第一个字节保持不变
-        output_data = bytearray([input_data[0]])
+        # 创建输出数据，第一个字节为A5
+        output_data = bytearray([0xA5])
 
         # 处理剩余字节
         remaining_data = input_data[1:]
@@ -623,42 +795,74 @@ class AdvancedSerialTool(QMainWindow):
         input_bits = []
         for byte_index, byte in enumerate(remaining_data):
             for bit_index in range(8):
-                # 计算全局位索引，考虑到第一个字节已经被跳过
-                global_bit_index = byte_index * 8 + bit_index
-                input_bits.append((byte >> bit_index) & 1)
+                # 计算全局位索引（从左到右递增）
+                global_bit_index = byte_index * 8 + (7 - bit_index)
+                input_bits.append((byte >> (7 - bit_index)) & 1)
 
-        # 创建输出位列表，长度为输入位列表的长度
-        output_bits = [0] * len(input_bits)
+        # 创建输出字节列表（24个字节，对应D0-D23）
+        output_bytes = [0] * 24
 
-        # 根据映射关系重新排列位，只处理启用的映射
+        # 根据映射关系设置输出字节的位值
         for input_pos, output_pos in self.bit_mapping.items():
             if isinstance(input_pos, str):
                 input_pos = int(input_pos)
             if isinstance(output_pos, str):
                 output_pos = int(output_pos)
 
-            # 调整输入位和输出位的索引，考虑到第一个字节已经被跳过
-            adjusted_input_pos = input_pos - 8
-            adjusted_output_pos = output_pos - 8
+            # 确保输入位在有效范围内
+            if (input_pos < len(input_bits) and
+                self.bit_mapping_enabled.get(str(input_pos), True)):
+                # 计算对应的字节索引和位索引
+                byte_index = output_pos // 8
+                bit_index = output_pos % 8
+                
+                # 如果字节索引在有效范围内
+                if 0 <= byte_index < 24:
+                    # 设置对应位的值
+                    if input_pos < len(input_bits):
+                        if input_bits[input_pos] == 1:
+                            output_bytes[byte_index] |= (1 << (7 - bit_index))
+                        else:
+                            output_bytes[byte_index] &= ~(1 << (7 - bit_index))
 
-            if (adjusted_input_pos >= 0 and
-                adjusted_input_pos < len(input_bits) and
-                adjusted_output_pos >= 0 and
-                adjusted_output_pos < len(output_bits) and
-                self.bit_mapping_enabled.get(input_pos, False)):
-                output_bits[adjusted_output_pos] = input_bits[adjusted_input_pos]
+        # 将输出字节添加到输出数据中
+        output_data.extend(output_bytes)
 
-        # 将位列表转换回字节
-        for i in range(0, len(output_bits), 8):
-            byte = 0
-            for j in range(min(8, len(output_bits) - i)):
-                byte |= output_bits[i + j] << j
-            output_data.append(byte)
+        # 添加测试状态字节（B24）
+        output_data.append(0x01)
+
+        # 计算并添加CRC16校验（C25-C26）
+        crc = self.crc16(output_data)
+        output_data.extend([crc >> 8, crc & 0xFF])
 
         return output_data
 
+    def update_mapping_values(self, data):
+        """更新映射表格中的当前值"""
+        if not hasattr(self, 'mapping_table'):
+            return
+            
+        # 将数据转换为位列表
+        bits = []
+        for byte in data[1:]:  # 跳过起始字节
+            for i in range(8):
+                bits.append((byte >> (7-i)) & 1)
+                
+        # 更新表格中的当前值
+        for i in range(min(len(bits), 192)):
+            value_item = self.mapping_table.item(i, 3)
+            if value_item:
+                value_item.setText(str(bits[i]))
+                if bits[i] == 1:
+                    value_item.setBackground(Qt.green)
+                else:
+                    value_item.setBackground(Qt.white)
+    
     def update_receive_text(self, data):
         """更新接收文本框"""
+        # 保存最后接收到的数据用于定时发送
+        self.last_received_data = data
+        
         # 更新接收计数
         self.rx_count += len(data)
         self.rx_count_label.setText(str(self.rx_count))
@@ -739,7 +943,7 @@ class AdvancedSerialTool(QMainWindow):
         # 获取当前标签页的内容
         current_index = self.send_tabs.currentIndex()
 
-        if current_index == 1:  # 默认发送区
+        if current_index == 0:  # 默认发送区
             if self.auto_generate_check.isChecked():
                 # 如果选中了自动生成，使用接收到的数据进行转换
                 text = self.receive_text.toPlainText().strip()
@@ -861,45 +1065,63 @@ class AdvancedSerialTool(QMainWindow):
 
     def timer_send(self):
         """定时发送数据"""
-        if self.ser and self.ser.is_open:
+        if not self.ser or not self.ser.is_open:
+            self.statusBar.showMessage("串口未打开")
+            self.toggle_timer()
+            return
+            
+        try:
             # 获取当前标签页的内容
             current_index = self.send_tabs.currentIndex()
-
+            
             if current_index == 0:  # 默认发送区
                 text = self.send_text.toPlainText().strip()
                 if not text:
                     self.statusBar.showMessage("发送内容为空，已停止定时发送")
                     self.toggle_timer()
                     return
-                try:
-                    # 处理十六进制发送
-                    if self.hex_send_check.isChecked():
-                        # 移除空格并转换为字节
-                        hex_text = text.replace(' ', '')
-                        try:
-                            data = bytes.fromhex(hex_text)
-                        except ValueError:
-                            self.statusBar.showMessage("请输入有效的十六进制字符串")
-                            self.toggle_timer()
-                            return
-                    else:
-                        # 普通文本发送
-                        data = text.encode('utf-8')
-
-                    # 添加换行符
-                    if self.crlf_check.isChecked():
-                        data += b'\r\n'
-
-                    # 发送数据
-                    self.ser.write(data)
-
-                    # 更新发送计数
-                    self.tx_count += len(data)
-                    self.tx_count_label.setText(str(self.tx_count))
-
-                except Exception as e:
-                    self.statusBar.showMessage(f"定时发送错误: {str(e)}")
-                    self.toggle_timer()
+                    
+                # 处理十六进制发送
+                if self.hex_send_check.isChecked():
+                    # 移除空格并转换为字节
+                    hex_text = text.replace(' ', '')
+                    try:
+                        data = bytes.fromhex(hex_text)
+                    except ValueError:
+                        self.statusBar.showMessage("请输入有效的十六进制字符串")
+                        self.toggle_timer()
+                        return
+                else:
+                    # 普通文本发送
+                    data = text.encode('utf-8')
+                
+                # 如果启用了映射配置，处理数据
+                if hasattr(self, 'mapping_window') and self.mapping_window.timer_enable.isChecked():
+                    data = self.convert_data(data)
+                
+                # 添加CRC16校验
+                if self.crc16_check.isChecked():
+                    crc = self.crc16(data)
+                    data += crc.to_bytes(2, byteorder='little')
+                
+                # 添加换行符
+                if self.crlf_check.isChecked():
+                    data += b'\r\n'
+                
+                # 发送数据
+                self.ser.write(data)
+                
+                # 更新发送计数
+                self.tx_count += len(data)
+                self.tx_count_label.setText(str(self.tx_count))
+                
+                # 更新映射表格中的当前值
+                if hasattr(self, 'mapping_window'):
+                    self.update_mapping_values(data)
+                
+        except Exception as e:
+            self.statusBar.showMessage(f"定时发送错误: {str(e)}")
+            self.toggle_timer()
 
     def add_command(self):
         """添加命令到命令列表"""
@@ -1123,8 +1345,8 @@ class BitMapper:
         if len(input_data) == 0:
             return bytearray()
 
-        # 第一个字节保持不变
-        output_data = bytearray([input_data[0]])
+        # 创建输出数据，第一个字节为A5
+        output_data = bytearray([0xA5])
 
         # 处理剩余字节
         remaining_data = input_data[1:]
@@ -1133,37 +1355,45 @@ class BitMapper:
         input_bits = []
         for byte_index, byte in enumerate(remaining_data):
             for bit_index in range(8):
-                # 计算全局位索引，考虑到第一个字节已经被跳过
-                global_bit_index = byte_index * 8 + bit_index
-                input_bits.append((byte >> bit_index) & 1)
+                # 计算全局位索引（从左到右递增）
+                global_bit_index = byte_index * 8 + (7 - bit_index)
+                input_bits.append((byte >> (7 - bit_index)) & 1)
 
-        # 创建输出位列表，长度为输入位列表的长度
-        output_bits = [0] * len(input_bits)
+        # 创建输出字节列表（24个字节，对应D0-D23）
+        output_bytes = [0] * 24
 
-        # 根据映射关系重新排列位，只处理启用的映射
+        # 根据映射关系设置输出字节的位值
         for input_pos, output_pos in self.bit_mapping.items():
             if isinstance(input_pos, str):
                 input_pos = int(input_pos)
             if isinstance(output_pos, str):
                 output_pos = int(output_pos)
 
-            # 调整输入位和输出位的索引，考虑到第一个字节已经被跳过
-            adjusted_input_pos = input_pos - 8
-            adjusted_output_pos = output_pos - 8
+            # 确保输入位在有效范围内
+            if (input_pos < len(input_bits) and
+                self.bit_mapping_enabled.get(str(input_pos), True)):
+                # 计算对应的字节索引和位索引
+                byte_index = output_pos // 8
+                bit_index = output_pos % 8
+                
+                # 如果字节索引在有效范围内
+                if 0 <= byte_index < 24:
+                    # 设置对应位的值
+                    if input_pos < len(input_bits):
+                        if input_bits[input_pos] == 1:
+                            output_bytes[byte_index] |= (1 << (7 - bit_index))
+                        else:
+                            output_bytes[byte_index] &= ~(1 << (7 - bit_index))
 
-            if (adjusted_input_pos >= 0 and
-                adjusted_input_pos < len(input_bits) and
-                adjusted_output_pos >= 0 and
-                adjusted_output_pos < len(output_bits) and
-                self.bit_mapping_enabled.get(input_pos, False)):
-                output_bits[adjusted_output_pos] = input_bits[adjusted_input_pos]
+        # 将输出字节添加到输出数据中
+        output_data.extend(output_bytes)
 
-        # 将位列表转换回字节
-        for i in range(0, len(output_bits), 8):
-            byte = 0
-            for j in range(min(8, len(output_bits) - i)):
-                byte |= output_bits[i + j] << j
-            output_data.append(byte)
+        # 添加测试状态字节（B24）
+        output_data.append(0x01)
+
+        # 计算并添加CRC16校验（C25-C26）
+        crc = self.crc16(output_data)
+        output_data.extend([crc >> 8, crc & 0xFF])
 
         return output_data
 
