@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QGroupBox, QGridLayout, QMessageBox, QAction, QMenuBar, QFileDialog,
                              QSpinBox, QTabWidget, QListWidget, QSplitter, QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog)
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer
-from PyQt5.QtGui import QFont, QTextCursor
+from PyQt5.QtGui import QFont, QTextCursor, QColor
 
 
 class SerialThread(QThread):
@@ -99,8 +99,11 @@ class AdvancedSerialTool(QMainWindow):
 
     def initUI(self):
         # 设置窗口标题和大小
-        self.setWindowTitle("串口调试工具")
+        self.setWindowTitle("新代测试")
         self.setGeometry(100, 100, 900, 700)
+        
+        # 自动加载窗口布局
+        self.load_window_layout()
 
         # 创建菜单栏
         self.create_menu_bar()
@@ -355,7 +358,7 @@ class AdvancedSerialTool(QMainWindow):
         # 定时发送
         send_tool_layout.addWidget(QLabel("定时发送(ms):"))
         self.timer_spin = QSpinBox()
-        self.timer_spin.setRange(100, 60000)
+        self.timer_spin.setRange(1, 60000)
         self.timer_spin.setValue(1000)
         send_tool_layout.addWidget(self.timer_spin)
 
@@ -428,6 +431,11 @@ class AdvancedSerialTool(QMainWindow):
         multi_command_action = QAction("多命令发送", self)
         multi_command_action.triggered.connect(self.open_multi_command_window)
         tool_menu.addAction(multi_command_action)
+        
+        # 指令生成菜单项
+        command_generator_action = QAction("指令生成", self)
+        command_generator_action.triggered.connect(self.open_command_generator_window)
+        tool_menu.addAction(command_generator_action)
 
         # 帮助菜单
         help_menu = menubar.addMenu("帮助")
@@ -550,6 +558,16 @@ class AdvancedSerialTool(QMainWindow):
                     self.table.setItem(i, 8, hex_value)
                     
         self.signal_detection_window = SignalDetectionWindow()
+        
+        # 为信号检测窗口添加布局记忆
+        self.load_sub_window_layout(self.signal_detection_window, 'signal_detection_window')
+        
+        # 添加关闭事件处理
+        def closeEvent(event):
+            self.save_sub_window_layout(self.signal_detection_window, 'signal_detection_window')
+            event.accept()
+        self.signal_detection_window.closeEvent = closeEvent
+        
         self.signal_detection_window.show()
         
         # 连接数据接收信号
@@ -668,6 +686,9 @@ class AdvancedSerialTool(QMainWindow):
         self.mapping_window = QWidget()
         self.mapping_window.setWindowTitle('映射配置')
         self.mapping_window.setGeometry(100, 100, 1000, 600) # Increased width for the new list
+        
+        # 为映射配置窗口添加布局记忆
+        self.load_sub_window_layout(self.mapping_window, 'mapping_window')
 
         # 创建置顶复选框
         self.stay_on_top_checkbox_mapping = QCheckBox('窗口置顶')
@@ -789,7 +810,7 @@ class AdvancedSerialTool(QMainWindow):
 
         
         self.timer_interval = QSpinBox()
-        self.timer_interval.setRange(100, 10000)  # 100ms到10s
+        self.timer_interval.setRange(1, 10000)  # 100ms到10s
         self.timer_interval.setValue(1000)  # 默认1秒
         self.timer_interval.setSuffix('ms')
         
@@ -812,6 +833,13 @@ class AdvancedSerialTool(QMainWindow):
         layout.addLayout(button_layout)
         
         # self.mapping_window.setLayout(layout) # Main layout is already set
+        
+        # 添加关闭事件处理
+        def closeEvent(event):
+            self.save_sub_window_layout(self.mapping_window, 'mapping_window')
+            event.accept()
+        self.mapping_window.closeEvent = closeEvent
+        
         self.mapping_window.show()
         
     def update_mapping(self, input_bit, output_bit):
@@ -1013,10 +1041,14 @@ class AdvancedSerialTool(QMainWindow):
         self.rx_count += len(data)
         self.rx_count_label.setText(str(self.rx_count))
 
+        # 添加时间戳和标记
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        
         if self.hex_recv_check.isChecked():
             # 十六进制显示
             hex_list = [f"{byte:02X}" for byte in data]
-            html_text = ""
+            # 构建带时间戳的完整HTML文本
+            html_text = f"[{timestamp}] [接收] "
             for hex_byte in hex_list:
                 if hex_byte == "5A":
                     html_text += f'<span style="color: green;">{hex_byte}</span> '
@@ -1024,26 +1056,23 @@ class AdvancedSerialTool(QMainWindow):
                     html_text += f'<span style="color: red;">{hex_byte}</span> '
                 else:
                     html_text += f"{hex_byte} "
+            html_text += "<br>"
+            
+            # 更新显示
             self.receive_text.moveCursor(QTextCursor.End)
             self.receive_text.insertHtml(html_text)
-            text = ""
         else:
             # 字符串显示
             try:
-                text = converted_data.decode('utf-8', errors='replace')
+                text = data.decode('utf-8', errors='replace')
             except:
-                text = str(converted_data)
-
-        # 添加时间戳和标记
-        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        if self.hex_recv_check.isChecked():
-            text = f"[{timestamp}] [接收] {' '.join(hex_list)}\n"
-        else:
+                text = str(data)
+            
             text = f"[{timestamp}] [接收] {text}\n"
-
-        # 更新显示
-        self.receive_text.moveCursor(QTextCursor.End)
-        self.receive_text.insertPlainText(text)
+            
+            # 更新显示
+            self.receive_text.moveCursor(QTextCursor.End)
+            self.receive_text.insertPlainText(text)
 
         # 自动滚屏
         if self.auto_scroll_check.isChecked():
@@ -1363,6 +1392,14 @@ class AdvancedSerialTool(QMainWindow):
                     f.write(f"hex_send={1 if self.hex_send_check.isChecked() else 0}\n")
                     f.write(f"crlf={1 if self.crlf_check.isChecked() else 0}\n")
                     f.write(f"timer_interval={self.timer_spin.value()}\n")
+                    
+                    # 保存窗口布局
+                    geometry = self.geometry()
+                    f.write(f"window_x={geometry.x()}\n")
+                    f.write(f"window_y={geometry.y()}\n")
+                    f.write(f"window_width={geometry.width()}\n")
+                    f.write(f"window_height={geometry.height()}\n")
+                    f.write(f"window_maximized={1 if self.isMaximized() else 0}\n")
 
                     # 保存命令列表
                     f.write("[commands]\n")
@@ -1449,6 +1486,20 @@ class AdvancedSerialTool(QMainWindow):
                     except:
                         pass
 
+                # 加载窗口布局
+                if all(key in config for key in ['window_x', 'window_y', 'window_width', 'window_height']):
+                    try:
+                        x = int(config['window_x'])
+                        y = int(config['window_y'])
+                        width = int(config['window_width'])
+                        height = int(config['window_height'])
+                        self.setGeometry(x, y, width, height)
+                        
+                        if 'window_maximized' in config and config['window_maximized'] == '1':
+                            self.showMaximized()
+                    except ValueError:
+                        pass  # 如果转换失败，保持默认窗口大小
+
                 # 加载命令列表
                 self.command_list.clear()
                 for cmd in commands:
@@ -1530,7 +1581,7 @@ class AdvancedSerialTool(QMainWindow):
         
         control_layout.addWidget(QLabel("总循环间隔:"))
         self.cycle_interval_spin = QSpinBox()
-        self.cycle_interval_spin.setRange(100, 60000)
+        self.cycle_interval_spin.setRange(1, 60000)
         self.cycle_interval_spin.setValue(1000)
         self.cycle_interval_spin.setSuffix(" ms")
         control_layout.addWidget(self.cycle_interval_spin)
@@ -1554,9 +1605,11 @@ class AdvancedSerialTool(QMainWindow):
         options_layout = QHBoxLayout(options_group)
         
         self.multi_hex_check = QCheckBox("十六进制发送")
+        self.multi_hex_check.setChecked(True)  # 默认勾选
         options_layout.addWidget(self.multi_hex_check)
         
         self.multi_crc_check = QCheckBox("自动添加CRC16")
+        self.multi_crc_check.setChecked(True)  # 默认勾选
         options_layout.addWidget(self.multi_crc_check)
         
         self.multi_crlf_check = QCheckBox("添加换行符")
@@ -1571,6 +1624,15 @@ class AdvancedSerialTool(QMainWindow):
         self.multi_command_timer = QTimer()
         self.multi_command_timer.timeout.connect(self.send_next_multi_command)
         self.current_command_index = 0
+        
+        # 为多命令发送窗口添加布局记忆
+        self.load_sub_window_layout(self.multi_command_window, 'multi_command_window')
+        
+        # 添加关闭事件处理
+        def closeEvent(event):
+            self.save_sub_window_layout(self.multi_command_window, 'multi_command_window')
+            event.accept()
+        self.multi_command_window.closeEvent = closeEvent
         
         # 显示窗口
         self.multi_command_window.show()
@@ -1825,15 +1887,310 @@ class AdvancedSerialTool(QMainWindow):
                 if self.send_tabs.tabText(i) == "多命令发送":
                     self.send_tabs.setCurrentIndex(i)
                     break
+    
+    def open_command_generator_window(self):
+        """打开指令生成窗口"""
+        # 创建指令生成窗口类
+        class CommandGeneratorWindow(QWidget):
+            def __init__(self):
+                super().__init__()
+                self.setWindowTitle('指令生成器')
+                self.setGeometry(200, 200, 900, 700)
+                self.init_ui()
+                
+            def init_ui(self):
+                layout = QVBoxLayout()
+                
+                # 添加说明标签
+                info_label = QLabel('PC应用程序到设备数据格式：A5 D0 D1 D2 D3 D4 D5 D6 D7 D8 D9 D10 D11 D12 D13 D14 D15 D16 D17 D18 D19 D20 D21 D22 D23 B24')
+                info_label.setWordWrap(True)
+                info_label.setStyleSheet('font-weight: bold; color: blue; padding: 10px;')
+                layout.addWidget(info_label)
+                
+                # 添加说明
+                desc_label = QLabel('A5：起始字节\nD0~D23：对应O0~O191，D0=O0~O7，D1=O8~15，以此类推\n请在下表中设置各位的值（0或1）：')
+                desc_label.setStyleSheet('padding: 5px;')
+                layout.addWidget(desc_label)
+                
+                # 创建表格
+                self.table = QTableWidget()
+                self.table.setRowCount(24)  # D0-D23
+                self.table.setColumnCount(9)  # 8位数据 + 1列字节值
+                
+                # 设置表头
+                headers = ['Bit7', 'Bit6', 'Bit5', 'Bit4', 'Bit3', 'Bit2', 'Bit1', 'Bit0', '字节值(HEX)']
+                self.table.setHorizontalHeaderLabels(headers)
+                
+                # 设置行标签
+                row_labels = [f'D{i} (O{i*8}-O{i*8+7})' for i in range(24)]
+                self.table.setVerticalHeaderLabels(row_labels)
+                
+                # 初始化表格数据
+                for i in range(24):
+                    for j in range(8):
+                        item = QTableWidgetItem('0')
+                        item.setTextAlignment(Qt.AlignCenter)
+                        self.table.setItem(i, j, item)
+                    # 字节值列
+                    hex_item = QTableWidgetItem('00')
+                    hex_item.setTextAlignment(Qt.AlignCenter)
+                    hex_item.setFlags(Qt.ItemIsEnabled)  # 只读
+                    hex_item.setBackground(QColor('#f0f0f0'))
+                    self.table.setItem(i, 8, hex_item)
+                
+                # 连接单元格变化事件
+                self.table.itemChanged.connect(self.on_cell_changed)
+                
+                # 设置列宽
+                for i in range(8):
+                    self.table.setColumnWidth(i, 60)
+                self.table.setColumnWidth(8, 100)
+                
+                layout.addWidget(self.table)
+                
+                # 按钮区域
+                button_layout = QHBoxLayout()
+                
+                # 全部置0按钮
+                clear_btn = QPushButton('全部置0')
+                clear_btn.clicked.connect(self.clear_all)
+                button_layout.addWidget(clear_btn)
+                
+                # 全部置1按钮
+                set_all_btn = QPushButton('全部置1')
+                set_all_btn.clicked.connect(self.set_all)
+                button_layout.addWidget(set_all_btn)
+                
+                button_layout.addStretch()
+                
+                # 生成指令按钮
+                generate_btn = QPushButton('生成指令')
+                generate_btn.setStyleSheet('background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;')
+                generate_btn.clicked.connect(self.generate_command)
+                button_layout.addWidget(generate_btn)
+                
+                # 复制指令按钮
+                copy_btn = QPushButton('复制指令')
+                copy_btn.setStyleSheet('background-color: #2196F3; color: white; font-weight: bold; padding: 10px;')
+                copy_btn.clicked.connect(self.copy_command)
+                button_layout.addWidget(copy_btn)
+                
+                layout.addLayout(button_layout)
+                
+                # 生成的指令显示区域
+                self.command_text = QTextEdit()
+                self.command_text.setMaximumHeight(100)
+                self.command_text.setPlaceholderText('生成的指令将显示在这里...')
+                self.command_text.setStyleSheet('font-family: Consolas, monospace; font-size: 12px;')
+                layout.addWidget(self.command_text)
+                
+                self.setLayout(layout)
+                
+            def on_cell_changed(self, item):
+                """单元格内容改变时的处理"""
+                if item.column() < 8:  # 只处理位数据列
+                    # 限制输入只能是0或1
+                    text = item.text()
+                    if text not in ['0', '1']:
+                        item.setText('0')
+                    
+                    # 更新对应行的字节值
+                    self.update_byte_value(item.row())
+            
+            def update_byte_value(self, row):
+                """更新指定行的字节值"""
+                byte_value = 0
+                for col in range(8):
+                    bit_item = self.table.item(row, col)
+                    if bit_item and bit_item.text() == '1':
+                        byte_value |= (1 << (7 - col))  # Bit7在最左边
+                
+                hex_item = self.table.item(row, 8)
+                if hex_item:
+                    hex_item.setText(f'{byte_value:02X}')
+            
+            def clear_all(self):
+                """全部置0"""
+                for i in range(24):
+                    for j in range(8):
+                        item = self.table.item(i, j)
+                        if item:
+                            item.setText('0')
+                    self.update_byte_value(i)
+            
+            def set_all(self):
+                """全部置1"""
+                for i in range(24):
+                    for j in range(8):
+                        item = self.table.item(i, j)
+                        if item:
+                            item.setText('1')
+                    self.update_byte_value(i)
+            
+            def generate_command(self):
+                """生成指令"""
+                command_bytes = ['A5']  # 起始字节
+                
+                # 添加D0-D23字节
+                for i in range(24):
+                    hex_item = self.table.item(i, 8)
+                    if hex_item:
+                        command_bytes.append(hex_item.text())
+                
+                # 添加B24（设为01）
+                command_bytes.extend(['01'])
+                
+                # 生成最终指令
+                command = ' '.join(command_bytes)
+                self.command_text.setPlainText(command)
+            
+            def copy_command(self):
+                """复制指令到剪贴板"""
+                command = self.command_text.toPlainText()
+                if command:
+                    clipboard = QApplication.clipboard()
+                    clipboard.setText(command)
+                    QMessageBox.information(self, '提示', '指令已复制到剪贴板！')
+                else:
+                    QMessageBox.warning(self, '警告', '请先生成指令！')
+        
+        # 创建并显示窗口
+        self.command_generator_window = CommandGeneratorWindow()
+        
+        # 为指令生成窗口添加布局记忆
+        self.load_sub_window_layout(self.command_generator_window, 'command_generator_window')
+        
+        # 添加关闭事件处理
+        def closeEvent(event):
+            self.save_sub_window_layout(self.command_generator_window, 'command_generator_window')
+            event.accept()
+        self.command_generator_window.closeEvent = closeEvent
+        
+        self.command_generator_window.show()
 
     def show_about(self):
         """显示关于对话框"""
         QMessageBox.about(self, "关于",
                           "东莞市海沛自动化设备有限公司")
 
+    def load_window_layout(self):
+        """加载窗口布局设置"""
+        try:
+            import os
+            config_file = os.path.join(os.path.dirname(__file__), 'window_layout.ini')
+            if os.path.exists(config_file):
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                
+                config = {}
+                for line in lines:
+                    line = line.strip()
+                    if line and '=' in line:
+                        key, value = line.split('=', 1)
+                        config[key] = value
+                
+                # 应用窗口布局
+                if all(key in config for key in ['window_x', 'window_y', 'window_width', 'window_height']):
+                    try:
+                        x = int(config['window_x'])
+                        y = int(config['window_y'])
+                        width = int(config['window_width'])
+                        height = int(config['window_height'])
+                        
+                        # 确保窗口在屏幕范围内
+                        from PyQt5.QtWidgets import QApplication
+                        screen = QApplication.desktop().screenGeometry()
+                        if x < 0 or y < 0 or x > screen.width() - 100 or y > screen.height() - 100:
+                            x, y = 100, 100  # 重置到默认位置
+                        if width < 400 or height < 300:
+                            width, height = 900, 700  # 重置到默认大小
+                        
+                        self.setGeometry(x, y, width, height)
+                        
+                        if 'window_maximized' in config and config['window_maximized'] == '1':
+                            self.showMaximized()
+                    except ValueError:
+                        pass  # 如果转换失败，保持默认窗口大小
+        except Exception as e:
+            print(f"加载窗口布局失败: {str(e)}")
+    
+    def save_window_layout(self):
+        """保存窗口布局设置"""
+        try:
+            import os
+            config_file = os.path.join(os.path.dirname(__file__), 'window_layout.ini')
+            
+            with open(config_file, 'w', encoding='utf-8') as f:
+                geometry = self.geometry()
+                f.write(f"window_x={geometry.x()}\n")
+                f.write(f"window_y={geometry.y()}\n")
+                f.write(f"window_width={geometry.width()}\n")
+                f.write(f"window_height={geometry.height()}\n")
+                f.write(f"window_maximized={1 if self.isMaximized() else 0}\n")
+        except Exception as e:
+             print(f"保存窗口布局失败: {str(e)}")
+    
+    def load_sub_window_layout(self, window, window_name):
+        """加载子窗口布局设置"""
+        try:
+            import os
+            config_file = os.path.join(os.path.dirname(__file__), f'{window_name}_layout.ini')
+            if os.path.exists(config_file):
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                
+                config = {}
+                for line in lines:
+                    line = line.strip()
+                    if line and '=' in line:
+                        key, value = line.split('=', 1)
+                        config[key] = value
+                
+                # 应用窗口布局
+                if all(key in config for key in ['window_x', 'window_y', 'window_width', 'window_height']):
+                    try:
+                        x = int(config['window_x'])
+                        y = int(config['window_y'])
+                        width = int(config['window_width'])
+                        height = int(config['window_height'])
+                        
+                        # 确保窗口在屏幕范围内
+                        from PyQt5.QtWidgets import QApplication
+                        screen = QApplication.desktop().screenGeometry()
+                        if x < 0 or y < 0 or x > screen.width() - 100 or y > screen.height() - 100:
+                            x, y = 100, 100  # 重置到默认位置
+                        if width < 300 or height < 200:
+                            width, height = 800, 600  # 重置到默认大小
+                        
+                        window.setGeometry(x, y, width, height)
+                        
+                        if 'window_maximized' in config and config['window_maximized'] == '1':
+                            window.showMaximized()
+                    except ValueError:
+                        pass  # 如果转换失败，保持默认窗口大小
+        except Exception as e:
+            print(f"加载{window_name}窗口布局失败: {str(e)}")
+    
+    def save_sub_window_layout(self, window, window_name):
+        """保存子窗口布局设置"""
+        try:
+            import os
+            config_file = os.path.join(os.path.dirname(__file__), f'{window_name}_layout.ini')
+            
+            with open(config_file, 'w', encoding='utf-8') as f:
+                geometry = window.geometry()
+                f.write(f"window_x={geometry.x()}\n")
+                f.write(f"window_y={geometry.y()}\n")
+                f.write(f"window_width={geometry.width()}\n")
+                f.write(f"window_height={geometry.height()}\n")
+                f.write(f"window_maximized={1 if window.isMaximized() else 0}\n")
+        except Exception as e:
+            print(f"保存{window_name}窗口布局失败: {str(e)}")
+
     def closeEvent(self, event):
         """关闭窗口时的处理"""
         self.close_serial()
+        self.save_window_layout()  # 自动保存窗口布局
         event.accept()
 
 
