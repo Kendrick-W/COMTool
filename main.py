@@ -9,7 +9,7 @@ import logging
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QComboBox, QPushButton, QTextEdit, QCheckBox, QStatusBar,
                              QGroupBox, QGridLayout, QMessageBox, QAction, QMenuBar, QFileDialog,
-                             QSpinBox, QTabWidget, QListWidget, QSplitter, QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView)
+                             QSpinBox, QTabWidget, QListWidget, QSplitter, QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog)
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer
 from PyQt5.QtGui import QFont, QTextCursor
 
@@ -99,6 +99,9 @@ class AdvancedSerialTool(QMainWindow):
 
         # 创建菜单栏
         self.create_menu_bar()
+
+        # 创建工具栏
+        self.create_toolbar()
 
         # 创建中央部件
         central_widget = QWidget()
@@ -414,6 +417,11 @@ class AdvancedSerialTool(QMainWindow):
         mapping_config_action = QAction("映射配置", self)
         mapping_config_action.triggered.connect(self.create_mapping_config_window)
         tool_menu.addAction(mapping_config_action)
+        
+        # 多命令发送菜单项
+        multi_command_action = QAction("多命令发送", self)
+        multi_command_action.triggered.connect(self.open_multi_command_window)
+        tool_menu.addAction(multi_command_action)
 
         # 帮助菜单
         help_menu = menubar.addMenu("帮助")
@@ -422,6 +430,14 @@ class AdvancedSerialTool(QMainWindow):
         about_action = QAction("关于", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+
+    def create_toolbar(self):
+        """创建工具栏"""
+        toolbar = self.addToolBar('主工具栏')
+        toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        
+        # 可以在这里添加其他工具栏按钮
+        pass
 
     def update_port_list(self):
         """更新串口列表"""
@@ -1422,6 +1438,259 @@ class AdvancedSerialTool(QMainWindow):
         self.rx_count_label.setText("0")
         self.tx_count_label.setText("0")
         self.statusBar.showMessage("统计数据已重置")
+
+    def open_multi_command_window(self):
+        """打开多命令发送独立窗口"""
+        # 创建多命令发送窗口
+        self.multi_command_window = QWidget()
+        self.multi_command_window.setWindowTitle('多命令发送')
+        self.multi_command_window.setGeometry(200, 200, 800, 600)
+        
+        # 创建主布局
+        layout = QVBoxLayout()
+        
+        # 创建命令管理区域
+        command_group = QGroupBox("命令管理")
+        command_layout = QVBoxLayout(command_group)
+        
+        # 创建命令表格
+        self.command_table = QTableWidget()
+        self.command_table.setColumnCount(3)
+        self.command_table.setHorizontalHeaderLabels(["命令内容", "间隔(ms)", "启用"])
+        
+        # 设置列宽
+        self.command_table.setColumnWidth(0, 500)  # 命令内容列（更宽）
+        self.command_table.setColumnWidth(1, 80)   # 间隔列
+        self.command_table.setColumnWidth(2, 60)   # 启用列
+        
+        # 设置列的调整模式
+        self.command_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.command_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self.command_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        command_layout.addWidget(self.command_table)
+        
+        # 命令操作按钮
+        button_layout = QHBoxLayout()
+        
+        self.add_cmd_btn = QPushButton("添加命令")
+        self.add_cmd_btn.clicked.connect(self.add_multi_command)
+        button_layout.addWidget(self.add_cmd_btn)
+        
+        self.remove_cmd_btn = QPushButton("删除命令")
+        self.remove_cmd_btn.clicked.connect(self.remove_multi_command)
+        button_layout.addWidget(self.remove_cmd_btn)
+        
+        self.clear_cmd_btn = QPushButton("清空命令")
+        self.clear_cmd_btn.clicked.connect(self.clear_multi_commands)
+        button_layout.addWidget(self.clear_cmd_btn)
+        
+        button_layout.addStretch()
+        command_layout.addLayout(button_layout)
+        layout.addWidget(command_group)
+        
+        # 创建发送控制区域
+        control_group = QGroupBox("发送控制")
+        control_layout = QHBoxLayout(control_group)
+        
+        control_layout.addWidget(QLabel("总循环间隔:"))
+        self.cycle_interval_spin = QSpinBox()
+        self.cycle_interval_spin.setRange(100, 60000)
+        self.cycle_interval_spin.setValue(1000)
+        self.cycle_interval_spin.setSuffix(" ms")
+        control_layout.addWidget(self.cycle_interval_spin)
+        
+        control_layout.addStretch()
+        
+        self.start_multi_btn = QPushButton("开始发送")
+        self.start_multi_btn.setStyleSheet("background-color: #4CAF50; color: white;")
+        self.start_multi_btn.clicked.connect(self.start_multi_command_send)
+        control_layout.addWidget(self.start_multi_btn)
+        
+        self.stop_multi_btn = QPushButton("停止发送")
+        self.stop_multi_btn.setStyleSheet("background-color: #f44336; color: white;")
+        self.stop_multi_btn.clicked.connect(self.stop_multi_command_send)
+        control_layout.addWidget(self.stop_multi_btn)
+        
+        layout.addWidget(control_group)
+        
+        # 创建选项区域
+        options_group = QGroupBox("发送选项")
+        options_layout = QHBoxLayout(options_group)
+        
+        self.multi_hex_check = QCheckBox("十六进制发送")
+        options_layout.addWidget(self.multi_hex_check)
+        
+        self.multi_crc_check = QCheckBox("自动添加CRC16")
+        options_layout.addWidget(self.multi_crc_check)
+        
+        self.multi_crlf_check = QCheckBox("添加换行符")
+        options_layout.addWidget(self.multi_crlf_check)
+        
+        options_layout.addStretch()
+        layout.addWidget(options_group)
+        
+        self.multi_command_window.setLayout(layout)
+        
+        # 初始化多命令发送定时器
+        self.multi_command_timer = QTimer()
+        self.multi_command_timer.timeout.connect(self.send_next_multi_command)
+        self.current_command_index = 0
+        
+        # 显示窗口
+        self.multi_command_window.show()
+    
+    def add_multi_command(self):
+        """添加多命令"""
+        text, ok = QInputDialog.getMultiLineText(self.multi_command_window, '添加命令', '输入要添加的命令:')
+        if ok and text:
+            row_count = self.command_table.rowCount()
+            self.command_table.insertRow(row_count)
+            
+            # 命令内容
+            self.command_table.setItem(row_count, 0, QTableWidgetItem(text))
+            # 间隔时间
+            interval_item = QTableWidgetItem("1000")
+            self.command_table.setItem(row_count, 1, interval_item)
+            # 启用状态
+            enable_check = QCheckBox()
+            enable_check.setChecked(True)
+            
+            # 创建一个容器widget来居中显示复选框
+            checkbox_widget = QWidget()
+            checkbox_layout = QHBoxLayout(checkbox_widget)
+            checkbox_layout.addWidget(enable_check)
+            checkbox_layout.setAlignment(Qt.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            
+            self.command_table.setCellWidget(row_count, 2, checkbox_widget)
+    
+    def remove_multi_command(self):
+        """删除选中的多命令"""
+        current_row = self.command_table.currentRow()
+        if current_row >= 0:
+            self.command_table.removeRow(current_row)
+    
+    def clear_multi_commands(self):
+        """清空所有多命令"""
+        self.command_table.setRowCount(0)
+    
+    def start_multi_command_send(self):
+        """开始多命令发送"""
+        if not self.ser or not self.ser.is_open:
+            QMessageBox.warning(self, "警告", "请先打开串口")
+            return
+        
+        if self.command_table.rowCount() == 0:
+            QMessageBox.warning(self, "警告", "请先添加命令")
+            return
+        
+        self.current_command_index = 0
+        interval = self.cycle_interval_spin.value()
+        self.multi_command_timer.start(interval)
+        
+        self.start_multi_btn.setEnabled(False)
+        self.stop_multi_btn.setEnabled(True)
+        
+        self.statusBar.showMessage("多命令发送已开始")
+    
+    def stop_multi_command_send(self):
+        """停止多命令发送"""
+        self.multi_command_timer.stop()
+        
+        self.start_multi_btn.setEnabled(True)
+        self.stop_multi_btn.setEnabled(False)
+        
+        self.statusBar.showMessage("多命令发送已停止")
+    
+    def send_next_multi_command(self):
+        """发送下一个多命令"""
+        if self.command_table.rowCount() == 0:
+            self.stop_multi_command_send()
+            return
+        
+        # 查找下一个启用的命令
+        start_index = self.current_command_index
+        checked_count = 0
+        
+        while checked_count < self.command_table.rowCount():
+            if self.current_command_index >= self.command_table.rowCount():
+                self.current_command_index = 0
+            
+            # 检查当前命令是否启用
+            enable_widget = self.command_table.cellWidget(self.current_command_index, 2)
+            if enable_widget:
+                 # 从容器widget中获取复选框
+                 checkbox = enable_widget.findChild(QCheckBox)
+                 if checkbox and checkbox.isChecked():
+                     # 发送当前命令
+                     command_item = self.command_table.item(self.current_command_index, 0)
+                     if command_item:
+                         command_text = command_item.text()
+                         self.send_multi_command_data(command_text)
+                     # 移动到下一个命令准备下次发送
+                     self.current_command_index += 1
+                     return
+            
+            self.current_command_index += 1
+            checked_count += 1
+        
+        # 如果遍历了所有命令都没有启用的，停止发送
+        self.stop_multi_command_send()
+        QMessageBox.information(self, "提示", "没有启用的命令")
+    
+    def send_multi_command_data(self, command_text):
+        """发送多命令数据"""
+        try:
+            # 处理十六进制发送
+            if self.multi_hex_check.isChecked():
+                hex_text = command_text.replace(' ', '')
+                data = bytes.fromhex(hex_text)
+            else:
+                data = command_text.encode('utf-8')
+            
+            # 添加CRC16校验
+            if self.multi_crc_check.isChecked():
+                crc = self.calculate_crc16(data)
+                data += crc.to_bytes(2, byteorder='little')
+            
+            # 添加换行符
+            if self.multi_crlf_check.isChecked():
+                data += b'\r\n'
+            
+            # 发送数据
+            self.ser.write(data)
+            
+            # 更新发送计数
+            self.tx_count += len(data)
+            self.tx_count_label.setText(str(self.tx_count))
+            
+            self.statusBar.showMessage(f"已发送命令: {command_text}")
+            
+        except Exception as e:
+            self.statusBar.showMessage(f"发送命令错误: {str(e)}")
+    
+    def calculate_crc16(self, data):
+        """计算CRC16校验码"""
+        crc = 0xFFFF
+        for byte in data:
+            crc ^= byte
+            for _ in range(8):
+                if crc & 1:
+                    crc = (crc >> 1) ^ 0xA001
+                else:
+                    crc >>= 1
+        return crc
+    
+    def show_multi_command_tab(self):
+        """切换到多命令发送标签页"""
+        if hasattr(self, 'multi_command_tab_index'):
+            self.send_tabs.setCurrentIndex(self.multi_command_tab_index)
+        else:
+            # 如果没有索引，尝试通过标签文本查找
+            for i in range(self.send_tabs.count()):
+                if self.send_tabs.tabText(i) == "多命令发送":
+                    self.send_tabs.setCurrentIndex(i)
+                    break
 
     def show_about(self):
         """显示关于对话框"""
