@@ -30,7 +30,7 @@ class SerialThread(QThread):
                 if self.serial_port.in_waiting:
                     data = self.serial_port.read(self.serial_port.in_waiting)
                     self.data_received.emit(data)
-                time.sleep(0.01)  # 减少CPU占用
+                time.sleep(0.001)  # 减少延迟，提高响应速度
             except Exception as e:
                 print(f"读取数据错误: {str(e)}")
                 break
@@ -530,32 +530,45 @@ class AdvancedSerialTool(QMainWindow):
                     
                 # 检查起始字节
                 if data[0] == 0x5A:
-                    self.start_byte_status.setText('已检测到')
-                    self.start_byte_status.setStyleSheet('color: green')
+                    if self.start_byte_status.text() != '已检测到':
+                        self.start_byte_status.setText('已检测到')
+                        self.start_byte_status.setStyleSheet('color: green')
                 else:
-                    self.start_byte_status.setText('未检测到')
-                    self.start_byte_status.setStyleSheet('color: red')
+                    if self.start_byte_status.text() != '未检测到':
+                        self.start_byte_status.setText('未检测到')
+                        self.start_byte_status.setStyleSheet('color: red')
                     return
                 
-                # 更新表格数据
+                # 批量更新表格数据，减少重绘次数
+                self.table.setUpdatesEnabled(False)  # 暂停更新
+                
                 for i in range(min(24, len(data)-1)):  # 跳过起始字节5A
                     byte_data = data[i+1]  # 数据从第二个字节开始
                     
                     # 更新8个位的值
                     for j in range(8):
                         bit_value = (byte_data >> (7-j)) & 1  # 从高位到低位
-                        item = QTableWidgetItem(str(bit_value))
-                        item.setTextAlignment(Qt.AlignCenter)
-                        if bit_value == 1:
-                            item.setBackground(Qt.green)
-                        else:
-                            item.setBackground(Qt.white)
-                        self.table.setItem(i, j, item)
+                        current_item = self.table.item(i, j)
+                        
+                        # 只在值发生变化时更新
+                        if current_item is None or current_item.text() != str(bit_value):
+                            item = QTableWidgetItem(str(bit_value))
+                            item.setTextAlignment(Qt.AlignCenter)
+                            if bit_value == 1:
+                                item.setBackground(Qt.green)
+                            else:
+                                item.setBackground(Qt.white)
+                            self.table.setItem(i, j, item)
                     
                     # 更新字节值（十六进制）
-                    hex_value = QTableWidgetItem(f'{byte_data:02X}')
-                    hex_value.setTextAlignment(Qt.AlignCenter)
-                    self.table.setItem(i, 8, hex_value)
+                    hex_str = f'{byte_data:02X}'
+                    current_hex_item = self.table.item(i, 8)
+                    if current_hex_item is None or current_hex_item.text() != hex_str:
+                        hex_value = QTableWidgetItem(hex_str)
+                        hex_value.setTextAlignment(Qt.AlignCenter)
+                        self.table.setItem(i, 8, hex_value)
+                
+                self.table.setUpdatesEnabled(True)  # 恢复更新
                     
         self.signal_detection_window = SignalDetectionWindow()
         
