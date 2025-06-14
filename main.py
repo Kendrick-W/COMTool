@@ -65,13 +65,18 @@ class AdvancedSerialTool(QMainWindow):
         # 定时发送
         self.timer = QTimer()
         self.timer.timeout.connect(self.send_data)
+        
+        # 定时更新启用映射列表
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.update_enabled_mappings_list)
+        self.update_timer.start(1000)  # 每1000毫秒（1秒）执行一次
 
         # 数据映射配置（I/O位映射）
         self.bit_mapping = {}
         self.bit_mapping_enabled = {}  # 存储每个映射是否启用
         for i in range(192):  # 24字节 * 8位，对应D0~D23
-            self.bit_mapping[i] = i  # 默认一一对应
-            self.bit_mapping_enabled[i] = False  # 默认禁用所有映射
+            self.bit_mapping[str(i)] = i  # 默认一一对应，使用字符串键
+            self.bit_mapping_enabled[str(i)] = False  # 默认禁用所有映射，使用字符串键
 
         # 初始化 command_list
         self.command_list = QListWidget()
@@ -123,6 +128,7 @@ class AdvancedSerialTool(QMainWindow):
         # 串口配置组
         config_group = QGroupBox("串口配置")
         config_layout = QGridLayout(config_group)
+        config_layout.setHorizontalSpacing(10)  # 设置水平间距为10像素，使布局更紧凑
 
         # 串口选择
         config_layout.addWidget(QLabel("串口:"), 0, 0)
@@ -281,14 +287,14 @@ class AdvancedSerialTool(QMainWindow):
             output_spin = QSpinBox()
             output_spin.setObjectName(f"output_spin_{i}")
             output_spin.setRange(0, 191)  # 输出位范围0-191
-            output_spin.setValue(self.bit_mapping[i])
-            output_spin.setEnabled(self.bit_mapping_enabled[i])  # 设置初始可编辑状态
+            output_spin.setValue(self.bit_mapping[str(i)])
+            output_spin.setEnabled(self.bit_mapping_enabled[str(i)])  # 设置初始可编辑状态
             output_spin.valueChanged.connect(lambda value, bit=i: self.update_bit_mapping(bit, value))
 
             # 添加启用/禁用复选框
             enable_check = QCheckBox()
             enable_check.setObjectName(f"enable_check_{i}")
-            enable_check.setChecked(self.bit_mapping_enabled[i])
+            enable_check.setChecked(self.bit_mapping_enabled[str(i)])
             enable_check.stateChanged.connect(lambda state, bit=i, spin=output_spin: self.toggle_mapping(bit, state == Qt.Checked, spin))
 
             mapping_grid.addWidget(input_label, row, 0)
@@ -685,7 +691,17 @@ class AdvancedSerialTool(QMainWindow):
         right_column_layout = QVBoxLayout()
 
         # Right column for enabled mappings list
-        right_column_layout.addWidget(QLabel('已启用映射:'))
+        enabled_header_layout = QHBoxLayout()
+        enabled_header_layout.addWidget(QLabel('已启用映射:'))
+        
+        # 添加更新按钮
+        refresh_btn = QPushButton('🔄')
+        refresh_btn.setToolTip('手动更新启用映射列表')
+        refresh_btn.setMaximumWidth(30)
+        refresh_btn.clicked.connect(self.update_enabled_mappings_list)
+        enabled_header_layout.addWidget(refresh_btn)
+        
+        right_column_layout.addLayout(enabled_header_layout)
         self.enabled_mappings_list = QListWidget()
         right_column_layout.addWidget(self.enabled_mappings_list)
 
@@ -802,9 +818,20 @@ class AdvancedSerialTool(QMainWindow):
         """更新位映射配置"""
         self.bit_mapping[str(input_bit)] = output_bit
 
-    def toggle_mapping(self, bit, enabled):
+    def update_bit_mapping(self, bit, value):
+        """更新位映射配置并刷新已启用列表"""
+        self.bit_mapping[str(bit)] = value
+        # 如果该位已启用，更新已启用映射列表
+        if self.bit_mapping_enabled.get(str(bit), False):
+            self.update_enabled_mappings_list()
+
+    def toggle_mapping(self, bit, enabled, spin_box=None):
         """切换映射启用状态"""
-        self.bit_mapping_enabled[str(bit)] = enabled == Qt.Checked
+        self.bit_mapping_enabled[str(bit)] = enabled
+        if spin_box:
+            spin_box.setEnabled(enabled)
+        # 更新已启用映射列表
+        self.update_enabled_mappings_list()
 
     def update_enabled_mappings_list(self):
         """更新已启用映射列表"""
@@ -1484,6 +1511,15 @@ class AdvancedSerialTool(QMainWindow):
         self.clear_cmd_btn.clicked.connect(self.clear_multi_commands)
         button_layout.addWidget(self.clear_cmd_btn)
         
+        # 添加保存和导入按钮
+        self.save_cmd_btn = QPushButton("保存命令")
+        self.save_cmd_btn.clicked.connect(self.save_multi_commands)
+        button_layout.addWidget(self.save_cmd_btn)
+        
+        self.import_cmd_btn = QPushButton("导入命令")
+        self.import_cmd_btn.clicked.connect(self.import_multi_commands)
+        button_layout.addWidget(self.import_cmd_btn)
+        
         button_layout.addStretch()
         command_layout.addLayout(button_layout)
         layout.addWidget(command_group)
@@ -1680,6 +1716,104 @@ class AdvancedSerialTool(QMainWindow):
                 else:
                     crc >>= 1
         return crc
+    
+    def save_multi_commands(self):
+        """保存多命令到文件"""
+        if self.command_table.rowCount() == 0:
+            QMessageBox.information(self, "提示", "没有命令可保存")
+            return
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self.multi_command_window, 
+            "保存命令文件", 
+            "", 
+            "JSON文件 (*.json);;所有文件 (*)"
+        )
+        
+        if file_path:
+            try:
+                import json
+                commands = []
+                for row in range(self.command_table.rowCount()):
+                    # 获取命令内容
+                    command_item = self.command_table.item(row, 0)
+                    command_text = command_item.text() if command_item else ""
+                    
+                    # 获取间隔时间
+                    interval_item = self.command_table.item(row, 1)
+                    interval = interval_item.text() if interval_item else "1000"
+                    
+                    # 获取启用状态
+                    enable_widget = self.command_table.cellWidget(row, 2)
+                    enabled = False
+                    if enable_widget:
+                        checkbox = enable_widget.findChild(QCheckBox)
+                        if checkbox:
+                            enabled = checkbox.isChecked()
+                    
+                    commands.append({
+                        "command": command_text,
+                        "interval": interval,
+                        "enabled": enabled
+                    })
+                
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(commands, f, ensure_ascii=False, indent=2)
+                
+                QMessageBox.information(self, "成功", f"命令已保存到: {file_path}")
+                
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"保存失败: {str(e)}")
+    
+    def import_multi_commands(self):
+        """从文件导入多命令"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self.multi_command_window,
+            "导入命令文件",
+            "",
+            "JSON文件 (*.json);;所有文件 (*)"
+        )
+        
+        if file_path:
+            try:
+                import json
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    commands = json.load(f)
+                
+                # 清空现有命令
+                self.command_table.setRowCount(0)
+                
+                # 导入命令
+                for cmd_data in commands:
+                    row_count = self.command_table.rowCount()
+                    self.command_table.insertRow(row_count)
+                    
+                    # 设置命令内容
+                    command_text = cmd_data.get("command", "")
+                    self.command_table.setItem(row_count, 0, QTableWidgetItem(command_text))
+                    
+                    # 设置间隔时间
+                    interval = cmd_data.get("interval", "1000")
+                    self.command_table.setItem(row_count, 1, QTableWidgetItem(str(interval)))
+                    
+                    # 设置启用状态
+                    enabled = cmd_data.get("enabled", True)
+                    enable_check = QCheckBox()
+                    enable_check.setChecked(enabled)
+                    
+                    # 创建容器widget来居中显示复选框
+                    checkbox_widget = QWidget()
+                    checkbox_layout = QHBoxLayout(checkbox_widget)
+                    checkbox_layout.addWidget(enable_check)
+                    checkbox_layout.setAlignment(Qt.AlignCenter)
+                    checkbox_layout.setContentsMargins(0, 0, 0, 0)
+                    
+                    self.command_table.setCellWidget(row_count, 2, checkbox_widget)
+                
+                QMessageBox.information(self, "成功", f"已导入 {len(commands)} 条命令")
+                
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"导入失败: {str(e)}")
     
     def show_multi_command_tab(self):
         """切换到多命令发送标签页"""
