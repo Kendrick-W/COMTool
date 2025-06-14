@@ -9,7 +9,7 @@ import logging
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QComboBox, QPushButton, QTextEdit, QCheckBox, QStatusBar,
                              QGroupBox, QGridLayout, QMessageBox, QAction, QMenuBar, QFileDialog,
-                             QSpinBox, QTabWidget, QListWidget, QSplitter, QScrollArea, QTableWidget, QTableWidgetItem)
+                             QSpinBox, QTabWidget, QListWidget, QSplitter, QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView)
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer
 from PyQt5.QtGui import QFont, QTextCursor
 
@@ -84,6 +84,14 @@ class AdvancedSerialTool(QMainWindow):
         # 初始化串口列表
         self.update_port_list()
 
+    def toggle_stay_on_top(self, window, state):
+        """切换窗口置顶状态"""
+        if state == Qt.Checked:
+            window.setWindowFlags(window.windowFlags() | Qt.WindowStaysOnTopHint)
+        else:
+            window.setWindowFlags(window.windowFlags() & ~Qt.WindowStaysOnTopHint)
+        window.show()  # 重新显示窗口以应用更改
+
     def initUI(self):
         # 设置窗口标题和大小
         self.setWindowTitle("串口调试工具")
@@ -98,6 +106,16 @@ class AdvancedSerialTool(QMainWindow):
 
         # 创建主布局
         main_layout = QVBoxLayout(central_widget)
+
+        # 添加窗口置顶复选框到主布局的顶部
+        self.stay_on_top_checkbox_main = QCheckBox('窗口置顶')
+        self.stay_on_top_checkbox_main.stateChanged.connect(lambda state: self.toggle_stay_on_top(self, state))
+        # 创建一个水平布局来容纳复选框并使其靠右
+        top_bar_layout = QHBoxLayout()
+        top_bar_layout.addStretch() # 将拉伸添加到复选框之前，使其靠右
+        top_bar_layout.addWidget(self.stay_on_top_checkbox_main)
+
+        main_layout.addLayout(top_bar_layout)
 
         # 串口配置组
         config_group = QGroupBox("串口配置")
@@ -424,7 +442,7 @@ class AdvancedSerialTool(QMainWindow):
             def __init__(self):
                 super().__init__()
                 self.setWindowTitle('信号检测')
-                self.setGeometry(200, 200, 1000, 800)
+                self.setGeometry(200, 200, 890, 618)
                 self.init_ui()
                 
             def init_ui(self):
@@ -437,7 +455,7 @@ class AdvancedSerialTool(QMainWindow):
                 self.start_byte_status.setStyleSheet('color: red')
                 status_layout.addWidget(self.start_byte_label)
                 status_layout.addWidget(self.start_byte_status)
-                status_layout.addStretch()
+
                 layout.addLayout(status_layout)
                 
                 # 创建表格
@@ -464,8 +482,10 @@ class AdvancedSerialTool(QMainWindow):
                 
                 # 设置表格样式
                 self.table.setStyleSheet('QTableWidget {gridline-color: #d0d0d0}')
-                self.table.horizontalHeader().setStretchLastSection(True)
-                self.table.verticalHeader().setDefaultSectionSize(30)
+                for i in range(8):
+                    self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeToContents)
+                self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.Stretch)
+                self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
                 
                 # 自动调整列宽
                 self.table.resizeColumnsToContents()
@@ -625,67 +645,123 @@ class AdvancedSerialTool(QMainWindow):
         """创建映射配置窗口"""
         self.mapping_window = QWidget()
         self.mapping_window.setWindowTitle('映射配置')
-        self.mapping_window.setGeometry(100, 100, 800, 600)
-        
-        layout = QVBoxLayout()
+        self.mapping_window.setGeometry(100, 100, 1000, 600) # Increased width for the new list
+
+        # 创建置顶复选框
+        self.stay_on_top_checkbox_mapping = QCheckBox('窗口置顶')
+        self.stay_on_top_checkbox_mapping.stateChanged.connect(
+            lambda state: self.toggle_stay_on_top(self.mapping_window, state)
+        )
+        # 创建一个顶部栏布局来放置置顶复选框
+        top_bar_mapping_layout = QHBoxLayout()
+        top_bar_mapping_layout.addStretch() # 将拉伸添加到复选框之前，使其靠右
+        top_bar_mapping_layout.addWidget(self.stay_on_top_checkbox_mapping)
+
+
+        # 主布局，先添加顶部栏，再添加原来的左右分栏
+        overall_main_layout = QVBoxLayout(self.mapping_window) # Set this as the main layout for mapping_window
+        overall_main_layout.addLayout(top_bar_mapping_layout)
+
+        main_horizontal_layout = QHBoxLayout() # This will be added to overall_main_layout
+        overall_main_layout.addLayout(main_horizontal_layout)
+
+        left_column_layout = QVBoxLayout()
+        right_column_layout = QVBoxLayout()
+
+        # Right column for enabled mappings list
+        right_column_layout.addWidget(QLabel('已启用映射:'))
+        self.enabled_mappings_list = QListWidget()
+        right_column_layout.addWidget(self.enabled_mappings_list)
+
+        main_horizontal_layout.addLayout(left_column_layout, 2) # Give more space to left column
+        main_horizontal_layout.addLayout(right_column_layout, 1)
+
+        # self.mapping_window.setLayout(main_horizontal_layout) # overall_main_layout is already set
+
+        # Original layout for mapping configuration will go into the left_column_layout
+        layout = QVBoxLayout() # This 'layout' is now for the left part
+        left_column_layout.addLayout(layout)
         
         # 添加说明标签
         desc_label = QLabel('配置数据映射规则：')
         layout.addWidget(desc_label)
         
-        # 创建映射表格
-        self.mapping_table = QTableWidget()
-        self.mapping_table.setColumnCount(4)
-        self.mapping_table.setHorizontalHeaderLabels(['输入位', '输出位', '启用', '当前值'])
-        self.mapping_table.setRowCount(192)  # 支持192个位的映射
-        
-        # 初始化表格内容
+        # 创建映射内容区域
+        mapping_content_widget = QWidget()
+        self.mapping_grid_layout = QGridLayout(mapping_content_widget)
+        self.mapping_grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.mapping_grid_layout.setSpacing(10)
+
+        # 创建滚动区域
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(mapping_content_widget)
+        layout.addWidget(scroll_area)
+
+        # 初始化映射项
         for i in range(192):
+            # 创建单个映射项的布局
+            item_layout = QHBoxLayout()
+            item_layout.setContentsMargins(0, 0, 0, 0)
+            item_layout.setSpacing(5)
+
             # 输入位
-            input_label = QTableWidgetItem(f'I{i}')
-            input_label.setFlags(input_label.flags() & ~Qt.ItemIsEditable)
-            self.mapping_table.setItem(i, 0, input_label)
-            
+            input_label = QLabel(f'I{i}')
+            input_label.setFixedWidth(50) # Increased width for longer text
+            item_layout.addWidget(input_label)
+
             # 输出位
             output_spin = QSpinBox()
             output_spin.setRange(0, 191)
             output_spin.setValue(i)
             output_spin.valueChanged.connect(lambda v, row=i: self.update_mapping(row, v))
-            self.mapping_table.setCellWidget(i, 1, output_spin)
-            
+            output_spin.setFixedWidth(50)
+            item_layout.addWidget(output_spin)
+
             # 启用复选框
-            enable_check = QCheckBox()
-            enable_check.setChecked(True)
-            enable_check.stateChanged.connect(lambda state, row=i: self.toggle_mapping(row, state))
-            enable_widget = QWidget()
-            enable_layout = QHBoxLayout(enable_widget)
-            enable_layout.addWidget(enable_check)
-            enable_layout.setAlignment(Qt.AlignCenter)
-            enable_layout.setContentsMargins(0, 0, 0, 0)
-            self.mapping_table.setCellWidget(i, 2, enable_widget)
-            
+            enable_check = QCheckBox('启用')
+            enable_check.setChecked(False)
+            enable_check.stateChanged.connect(lambda state, row=i: (
+                self.toggle_mapping(row, state),
+                self.update_enabled_mappings_list()
+            ))
+            item_layout.addWidget(enable_check)
+
             # 当前值
-            value_label = QTableWidgetItem('0')
-            value_label.setFlags(value_label.flags() & ~Qt.ItemIsEditable)
-            value_label.setTextAlignment(Qt.AlignCenter)
-            self.mapping_table.setItem(i, 3, value_label)
-        
-        self.mapping_table.resizeColumnsToContents()
-        layout.addWidget(self.mapping_table)
+            value_label = QLabel('0')
+            value_label.setFixedWidth(30)
+            value_label.setAlignment(Qt.AlignCenter)
+            item_layout.addWidget(value_label)
+
+            # 将映射项添加到网格布局中
+            col = (i % 2) * 4  # 两列，每列4个控件
+            row = i // 2
+            self.mapping_grid_layout.addLayout(item_layout, row, col, 1, 4) # 跨4列以容纳所有控件
+
+        # 存储对当前值标签的引用，以便后续更新
+        self.mapping_value_labels = []
+        for i in range(192):
+            # 找到对应的QLabel
+            label = self.mapping_grid_layout.itemAtPosition(i // 2, (i % 2) * 4 + 3).widget()
+            self.mapping_value_labels.append(label)
+
         
         # 添加定时发送控制
         timer_group = QGroupBox('定时发送设置')
         timer_layout = QHBoxLayout()
         
-        self.timer_enable = QCheckBox('启用定时发送')
-        self.timer_enable.stateChanged.connect(self.toggle_auto_send)
+        self._is_auto_sending = False  # Track auto send state
+        self.timer_enable_btn = QPushButton('启用定时发送')
+        self.timer_enable_btn.setStyleSheet('background-color: red; color: white;')
+        self.timer_enable_btn.clicked.connect(self.toggle_auto_send_status)
+
         
         self.timer_interval = QSpinBox()
         self.timer_interval.setRange(100, 10000)  # 100ms到10s
         self.timer_interval.setValue(1000)  # 默认1秒
         self.timer_interval.setSuffix('ms')
         
-        timer_layout.addWidget(self.timer_enable)
+        timer_layout.addWidget(self.timer_enable_btn)
         timer_layout.addWidget(QLabel('发送间隔：'))
         timer_layout.addWidget(self.timer_interval)
         timer_layout.addStretch()
@@ -703,7 +779,7 @@ class AdvancedSerialTool(QMainWindow):
         button_layout.addWidget(load_btn)
         layout.addLayout(button_layout)
         
-        self.mapping_window.setLayout(layout)
+        # self.mapping_window.setLayout(layout) # Main layout is already set
         self.mapping_window.show()
         
     def update_mapping(self, input_bit, output_bit):
@@ -713,18 +789,45 @@ class AdvancedSerialTool(QMainWindow):
     def toggle_mapping(self, bit, enabled):
         """切换映射启用状态"""
         self.bit_mapping_enabled[str(bit)] = enabled == Qt.Checked
+
+    def update_enabled_mappings_list(self):
+        """更新已启用映射列表"""
+        if not hasattr(self, 'enabled_mappings_list'): # Ensure the list widget exists
+            return
+        self.enabled_mappings_list.clear()
+        for bit, enabled in self.bit_mapping_enabled.items():
+            if enabled:
+                # Find the corresponding output bit from self.bit_mapping
+                output_bit = self.bit_mapping.get(str(bit), bit) # Default to input bit if not found
+                self.enabled_mappings_list.addItem(f'I{bit} -> O{output_bit}')
         
-    def toggle_auto_send(self, state):
-        """切换定时发送状态"""
-        if state == Qt.Checked:
+    def toggle_auto_send_status(self):
+        """切换定时发送按钮状态并执行相应操作"""
+        self._is_auto_sending = not self._is_auto_sending
+        self.update_auto_send_button_style()
+        self.perform_auto_send_action()
+
+    def update_auto_send_button_style(self):
+        """更新定时发送按钮的文本和样式"""
+        if self._is_auto_sending:
+            self.timer_enable_btn.setText('禁用定时发送')
+            self.timer_enable_btn.setStyleSheet('background-color: green; color: white;')
+        else:
+            self.timer_enable_btn.setText('启用定时发送')
+            self.timer_enable_btn.setStyleSheet('background-color: red; color: white;')
+
+    def perform_auto_send_action(self):
+        """根据当前状态启动或停止定时发送"""
+        if self._is_auto_sending:
             # 启动定时器
             interval = self.timer_interval.value()
-            self.send_timer = QTimer()
-            self.send_timer.timeout.connect(self.auto_send_data)
+            if not hasattr(self, 'send_timer') or not self.send_timer:
+                self.send_timer = QTimer(self)
+                self.send_timer.timeout.connect(self.auto_send_data)
             self.send_timer.start(interval)
         else:
             # 停止定时器
-            if hasattr(self, 'send_timer'):
+            if hasattr(self, 'send_timer') and self.send_timer:
                 self.send_timer.stop()
                 
     def auto_send_data(self):
