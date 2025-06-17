@@ -675,12 +675,26 @@ class AdvancedSerialTool(QMainWindow):
 
     def close_serial(self):
         """关闭串口"""
-        # 停止定时发送
+        # 停止所有定时器
         if self.timer.isActive():
-            self.toggle_timer()
+            self.timer.stop()
+            self.timer_btn.setText("开始定时")
+            self.timer_btn.setStyleSheet("background-color: #2196F3; color: white;")
+            
+        # 停止多命令定时器（如果存在）
+        if hasattr(self, 'multi_command_window') and hasattr(self.multi_command_window, 'timer') and self.multi_command_window.timer.isActive():
+            self.multi_command_window.timer.stop()
+            
+        # 停止映射窗口定时器（如果存在）
+        if hasattr(self, 'mapping_window') and hasattr(self.mapping_window, 'timer_enable') and self.mapping_window.timer_enable.isChecked():
+            self.mapping_window.toggle_auto_send_status()
+            
+        # 处理事件循环，确保定时器完全停止
+        QApplication.processEvents()
 
         if self.serial_thread and self.serial_thread.isRunning():
             self.serial_thread.stop()
+            self.serial_thread.wait()  # 等待线程完全停止
             self.serial_thread = None
 
         if self.ser and self.ser.is_open:
@@ -789,11 +803,13 @@ class AdvancedSerialTool(QMainWindow):
             output_spin.setValue(i)
             output_spin.valueChanged.connect(lambda v, row=i: self.update_mapping(row, v))
             output_spin.setFixedWidth(50)
+            output_spin.setObjectName(f"output_spin_{i}")  # 设置对象名，用于findChild查找
             item_layout.addWidget(output_spin)
 
             # 启用复选框
             enable_check = QCheckBox('启用')
             enable_check.setChecked(False)
+            enable_check.setObjectName(f"enable_check_{i}")  # 设置对象名，用于findChild查找
             enable_check.stateChanged.connect(lambda state, row=i: (
                 self.toggle_mapping(row, state),
                 self.update_enabled_mappings_list()
@@ -960,7 +976,6 @@ class AdvancedSerialTool(QMainWindow):
 
                 # 更新UI
                 for i in range(192):
-                    row = i + 1
                     # 更新SpinBox的值
                     spin_box = self.findChild(QSpinBox, f"output_spin_{i}")
                     if spin_box:
@@ -968,89 +983,137 @@ class AdvancedSerialTool(QMainWindow):
                     # 更新CheckBox的状态
                     check_box = self.findChild(QCheckBox, f"enable_check_{i}")
                     if check_box:
-                        check_box.setChecked(self.bit_mapping_enabled.get(str(i), True))
+                        check_box.setChecked(self.bit_mapping_enabled.get(str(i), False))
+                
+                # 更新已启用映射列表
+                self.update_enabled_mappings_list()
 
                 QMessageBox.information(self, "成功", "映射配置已加载")
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"加载配置失败: {str(e)}")
 
     def convert_data(self, input_data):
-        """根据映射配置转换数据"""
+        """根据映射配置转换数据 - 性能优化版本"""
         if len(input_data) == 0:
             return bytearray()
 
         # 创建输出数据，第一个字节为A5
         output_data = bytearray([0xA5])
-
+        
+        # 创建输出字节列表（24个字节，对应D0-D23）
+        output_bytes = bytearray(24)  # 使用bytearray而不是list，减少类型转换
+        
+        # 如果没有启用的映射，直接返回默认输出
+        if not any(self.bit_mapping_enabled.values()):
+            output_data.extend(output_bytes)
+            output_data.append(0x01)  # 添加测试状态字节（B24）
+            crc = self.crc16(output_data)
+            output_data.extend([crc >> 8, crc & 0xFF])
+            return output_data
+            
         # 处理剩余字节
         remaining_data = input_data[1:]
-
-        # 将输入数据转换为位列表
-        input_bits = []
-        for byte_index, byte in enumerate(remaining_data):
-            for bit_index in range(8):
-                # 计算全局位索引（从左到右递增）
-                global_bit_index = byte_index * 8 + (7 - bit_index)
-                input_bits.append((byte >> (7 - bit_index)) & 1)
-
-        # 创建输出字节列表（24个字节，对应D0-D23）
-        output_bytes = [0] * 24
-
-        # 根据映射关系设置输出字节的位值
-        for input_pos, output_pos in self.bit_mapping.items():
-            if isinstance(input_pos, str):
-                input_pos = int(input_pos)
-            if isinstance(output_pos, str):
-                output_pos = int(output_pos)
-
-            # 确保输入位在有效范围内
-            if (input_pos < len(input_bits) and
-                self.bit_mapping_enabled.get(str(input_pos), True)):
-                # 计算对应的字节索引和位索引
-                byte_index = output_pos // 8
-                bit_index = output_pos % 8
+        
+        # 预先计算启用的映射，避免在循环中重复检查
+        enabled_mappings = {}
+        for input_pos, enabled in self.bit_mapping_enabled.items():
+            if enabled:
+                input_pos_int = int(input_pos) if isinstance(input_pos, str) else input_pos
+                output_pos = self.bit_mapping.get(input_pos, input_pos)
+                output_pos_int = int(output_pos) if isinstance(output_pos, str) else output_pos
+                enabled_mappings[input_pos_int] = output_pos_int
+        
+        # 如果没有启用的映射，直接返回默认输出
+        if not enabled_mappings:
+            output_data.extend(output_bytes)
+            output_data.append(0x01)  # 添加测试状态字节（B24）
+            crc = self.crc16(output_data)
+            output_data.extend([crc >> 8, crc & 0xFF])
+            return output_data
+        
+        # 优化：直接处理字节，避免位列表转换
+        for input_pos, output_pos in enabled_mappings.items():
+            # 计算输入位所在的字节和位置
+            input_byte_index = input_pos // 8
+            input_bit_index = 7 - (input_pos % 8)  # 从左到右递增
+            
+            # 确保输入字节索引在有效范围内
+            if input_byte_index < len(remaining_data):
+                # 获取输入位的值
+                input_bit_value = (remaining_data[input_byte_index] >> input_bit_index) & 1
                 
-                # 如果字节索引在有效范围内
-                if 0 <= byte_index < 24:
+                # 计算输出位所在的字节和位置
+                output_byte_index = output_pos // 8
+                output_bit_index = 7 - (output_pos % 8)  # 从左到右递增
+                
+                # 如果输出字节索引在有效范围内
+                if 0 <= output_byte_index < 24:
                     # 设置对应位的值
-                    if input_pos < len(input_bits):
-                        if input_bits[input_pos] == 1:
-                            output_bytes[byte_index] |= (1 << (7 - bit_index))
-                        else:
-                            output_bytes[byte_index] &= ~(1 << (7 - bit_index))
-
+                    if input_bit_value == 1:
+                        output_bytes[output_byte_index] |= (1 << output_bit_index)
+                    else:
+                        output_bytes[output_byte_index] &= ~(1 << output_bit_index)
+        
         # 将输出字节添加到输出数据中
         output_data.extend(output_bytes)
-
+        
         # 添加测试状态字节（B24）
         output_data.append(0x01)
-
+        
         # 计算并添加CRC16校验（C25-C26）
         crc = self.crc16(output_data)
         output_data.extend([crc >> 8, crc & 0xFF])
-
+        
         return output_data
 
     def update_mapping_values(self, data):
-        """更新映射表格中的当前值"""
+        """更新映射表格中的当前值 - 性能优化版本"""
         if not hasattr(self, 'mapping_table'):
             return
+        
+        # 跳过处理如果数据为空
+        if not data or len(data) <= 1:
+            return
             
-        # 将数据转换为位列表
-        bits = []
-        for byte in data[1:]:  # 跳过起始字节
-            for i in range(8):
-                bits.append((byte >> (7-i)) & 1)
-                
-        # 更新表格中的当前值
-        for i in range(min(len(bits), 192)):
+        # 批量更新优化：预先计算所有位值
+        bits = [0] * 192  # 预分配数组大小
+        data_len = len(data) - 1  # 减去起始字节
+        
+        # 直接计算位值，避免逐位追加
+        for byte_index in range(min(data_len, 24)):  # 最多处理24个字节
+            byte = data[byte_index + 1]  # 跳过起始字节
+            for bit_index in range(8):
+                bit_pos = byte_index * 8 + bit_index
+                if bit_pos < 192:  # 确保不超出范围
+                    bits[bit_pos] = (byte >> (7-bit_index)) & 1
+        
+        # 批量更新UI元素
+        # 创建颜色缓存以避免重复创建相同的QColor对象
+        green_bg = Qt.green
+        white_bg = Qt.white
+        
+        # 只更新可见的行以提高性能
+        visible_rect = self.mapping_table.viewport().rect()
+        first_row = self.mapping_table.rowAt(visible_rect.top())
+        last_row = self.mapping_table.rowAt(visible_rect.bottom())
+        
+        # 如果没有可见行，则使用默认范围
+        if first_row == -1:
+            first_row = 0
+        if last_row == -1:
+            last_row = min(50, 192)  # 默认显示前50行或全部
+        
+        # 只更新可见区域的单元格
+        for i in range(first_row, min(last_row + 1, 192)):
             value_item = self.mapping_table.item(i, 3)
             if value_item:
-                value_item.setText(str(bits[i]))
-                if bits[i] == 1:
-                    value_item.setBackground(Qt.green)
-                else:
-                    value_item.setBackground(Qt.white)
+                # 只有当值发生变化时才更新文本和背景
+                current_text = value_item.text()
+                new_text = str(bits[i])
+                
+                if current_text != new_text:
+                    value_item.setText(new_text)
+                    value_item.setBackground(green_bg if bits[i] == 1 else white_bg)
     
     def update_receive_text(self, data):
         """更新接收文本框 - 使用缓冲机制优化性能"""
@@ -1169,11 +1232,19 @@ class AdvancedSerialTool(QMainWindow):
         return ((crc & 0xFF) << 8) | ((crc >> 8) & 0xFF)
 
     def send_data(self):
+        """发送数据"""
         logging.basicConfig(level=logging.DEBUG)
         logging.debug('开始执行 send_data 方法')
-        """发送数据"""
+        
+        # 检查串口状态
         if not self.ser or not self.ser.is_open:
             QMessageBox.warning(self, "警告", "串口未打开")
+            # 如果定时器正在运行，停止它
+            if self.timer.isActive():
+                self.timer.stop()
+                self.timer_btn.setText("开始定时")
+                self.timer_btn.setStyleSheet("background-color: #2196F3; color: white;")
+                self.statusBar.showMessage("定时发送已停止：串口未打开")
             return
 
         # 获取当前标签页的内容
@@ -1223,7 +1294,7 @@ class AdvancedSerialTool(QMainWindow):
                     # 根据复选框状态计算CRC16
                     if self.crc16_check.isChecked():
                         crc = self.crc16(data)
-                        crc_bytes = crc.to_bytes(2, byteorder='big')  # 调换字节位置：从little改为big
+                        crc_bytes = crc.to_bytes(2, byteorder='big')  
                         data += crc_bytes
                         print(data)
                         # 格式化为带空格的十六进制显示
@@ -1239,7 +1310,7 @@ class AdvancedSerialTool(QMainWindow):
                     # 根据复选框状态计算CRC16
                     if self.crc16_check.isChecked():
                         crc = self.crc16(text.encode('utf-8'))
-                        crc_bytes = crc.to_bytes(2, byteorder='big')  # 调换字节位置：从little改为big
+                        crc_bytes = crc.to_bytes(2, byteorder='little')  # 调换字节位置：从big改为little
                         data = text.encode('utf-8') + crc_bytes
                         self.crc16_label.setText(f"CRC16: {crc:04X}")
                     else:
@@ -1270,9 +1341,20 @@ class AdvancedSerialTool(QMainWindow):
                 if self.auto_scroll_check.isChecked():
                     self.receive_text.moveCursor(QTextCursor.End)
 
+            except ValueError as e:
+                # 十六进制格式错误时只在状态栏显示提示，不弹出错误对话框
+                logging.error(f'十六进制格式错误: {str(e)}')
+                self.statusBar.showMessage(f'十六进制格式错误: {str(e)}')
+                # 如果定时器正在运行，停止它
+                if self.timer.isActive():
+                    self.timer.stop()
+                    self.timer_btn.setText("开始定时")
+                    self.timer_btn.setStyleSheet("background-color: #2196F3; color: white;")
+                    self.statusBar.showMessage("定时发送已停止：十六进制格式错误")
             except Exception as e:
                 logging.error(f'发送数据时出现异常: {str(e)}')
                 self.statusBar.showMessage(f'发送数据错误: {str(e)}')
+                # 其他类型的错误仍然弹出错误对话框
                 QMessageBox.critical(self, '错误', f'发送数据错误: {str(e)}')
 
     def save_to_history(self, text):
@@ -1307,9 +1389,19 @@ class AdvancedSerialTool(QMainWindow):
 
     def timer_send(self):
         """定时发送数据"""
-        if not self.ser or not self.ser.is_open:
-            self.statusBar.showMessage("串口未打开")
-            self.toggle_timer()
+        # 检查串口状态
+        if not self.ser:
+            self.statusBar.showMessage("串口对象不存在")
+            self.timer.stop()
+            self.timer_btn.setText("开始定时")
+            self.timer_btn.setStyleSheet("background-color: #2196F3; color: white;")
+            return
+            
+        if not self.ser.is_open:
+            self.statusBar.showMessage("串口已关闭，停止定时发送")
+            self.timer.stop()
+            self.timer_btn.setText("开始定时")
+            self.timer_btn.setStyleSheet("background-color: #2196F3; color: white;")
             return
             
         try:
@@ -1329,9 +1421,15 @@ class AdvancedSerialTool(QMainWindow):
                     hex_text = text.replace(' ', '')
                     try:
                         data = bytes.fromhex(hex_text)
-                    except ValueError:
+                    except ValueError as e:
+                        # 十六进制格式错误时只在状态栏显示提示
+                        logging.error(f'十六进制格式错误: {str(e)}')
                         self.statusBar.showMessage("请输入有效的十六进制字符串")
-                        self.toggle_timer()
+                        # 停止定时器但不弹出错误对话框
+                        self.timer.stop()
+                        self.timer_btn.setText("开始定时")
+                        self.timer_btn.setStyleSheet("background-color: #2196F3; color: white;")
+                        self.statusBar.showMessage("定时发送已停止：十六进制格式错误")
                         return
                 else:
                     # 普通文本发送
@@ -1362,8 +1460,14 @@ class AdvancedSerialTool(QMainWindow):
                     self.update_mapping_values(data)
                 
         except Exception as e:
+            # 记录错误日志
+            logging.error(f'定时发送错误: {str(e)}')
+            # 在状态栏显示错误信息
             self.statusBar.showMessage(f"定时发送错误: {str(e)}")
-            self.toggle_timer()
+            # 直接停止定时器而不弹出错误对话框
+            self.timer.stop()
+            self.timer_btn.setText("开始定时")
+            self.timer_btn.setStyleSheet("background-color: #2196F3; color: white;")
 
     def add_command(self):
         """添加命令到命令列表"""
@@ -1819,7 +1923,7 @@ class AdvancedSerialTool(QMainWindow):
             # 添加CRC16校验
             if self.multi_crc_check.isChecked():
                 crc = self.calculate_crc16(data)
-                data += crc.to_bytes(2, byteorder='big')  # 调换字节位置：从little改为big
+                data += crc.to_bytes(2, byteorder='little')  # 调换字节位置：从big改为little
             
             # 添加换行符
             if self.multi_crlf_check.isChecked():
@@ -2259,13 +2363,50 @@ class AdvancedSerialTool(QMainWindow):
 
     def closeEvent(self, event):
         """关闭窗口时的处理"""
+        # 停止所有定时器
+        if self.timer.isActive():
+            self.timer.stop()
+            
+        if self.update_timer.isActive():
+            self.update_timer.stop()
+            
+        if self.buffer_timer.isActive():
+            self.buffer_timer.stop()
+            
+        # 停止多命令定时器（如果存在）
+        if hasattr(self, 'multi_command_window') and hasattr(self.multi_command_window, 'timer') and self.multi_command_window.timer.isActive():
+            self.multi_command_window.timer.stop()
+            
+        # 停止映射窗口定时器（如果存在）
+        if hasattr(self, 'mapping_window') and hasattr(self.mapping_window, 'timer_enable') and self.mapping_window.timer_enable.isChecked():
+            self.mapping_window.toggle_auto_send_status()
+            
+        # 处理事件循环，确保定时器完全停止
+        QApplication.processEvents()
+        
+        # 关闭串口
         self.close_serial()
-        self.save_window_layout()  # 自动保存窗口布局
+        
+        # 保存窗口布局
+        self.save_window_layout()
+        
+        # 接受关闭事件
         event.accept()
 
 
 class BitMapper:
     def __init__(self):
+        # 初始化CRC16查找表 - 性能优化
+        self.crc16_table = [0] * 256
+        for i in range(256):
+            crc = i
+            for _ in range(8):
+                if crc & 1:
+                    crc = (crc >> 1) ^ 0xA001
+                else:
+                    crc = crc >> 1
+            self.crc16_table[i] = crc
+            
         # 初始化映射配置
         self.bit_mapping = {}
         self.bit_mapping_enabled = {}
@@ -2329,6 +2470,13 @@ class BitMapper:
         output_data.extend([crc >> 8, crc & 0xFF])
 
         return output_data
+        
+    def crc16(self, data):
+        """使用查找表计算CRC16 - 性能优化版本"""
+        crc = 0xFFFF
+        for byte in data:
+            crc = (crc >> 8) ^ self.crc16_table[(crc ^ byte) & 0xFF]
+        return ((crc & 0xFF) << 8) | ((crc >> 8) & 0xFF)
 
 def test_specific_input():
     """测试特定输入数据的转换结果"""
