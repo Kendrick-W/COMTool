@@ -30,7 +30,7 @@ class SerialThread(QThread):
                 if self.serial_port.in_waiting:
                     data = self.serial_port.read(self.serial_port.in_waiting)
                     self.data_received.emit(data)
-                time.sleep(0.001)  # 减少延迟，提高响应速度
+                time.sleep(0.005)  # 平衡响应速度和CPU占用，适合10ms数据间隔
             except Exception as e:
                 print(f"读取数据错误: {str(e)}")
                 break
@@ -70,6 +70,13 @@ class AdvancedSerialTool(QMainWindow):
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_enabled_mappings_list)
         self.update_timer.start(1000)  # 每1000毫秒（1秒）执行一次
+        
+        # 数据缓冲机制 - 优化UI更新性能
+        self.data_buffer = []
+        self.buffer_timer = QTimer()
+        self.buffer_timer.timeout.connect(self.flush_data_buffer)
+        self.buffer_timer.start(100)  # 每100毫秒批量处理一次缓冲数据，减少UI更新频率
+        self.max_buffer_size = 50  # 最大缓冲区大小，防止数据堆积
 
         # 数据映射配置（I/O位映射）
         self.bit_mapping = {}
@@ -1046,7 +1053,7 @@ class AdvancedSerialTool(QMainWindow):
                     value_item.setBackground(Qt.white)
     
     def update_receive_text(self, data):
-        """更新接收文本框"""
+        """更新接收文本框 - 使用缓冲机制优化性能"""
         # 保存最后接收到的数据用于定时发送
         self.last_received_data = data
         
@@ -1054,42 +1061,83 @@ class AdvancedSerialTool(QMainWindow):
         self.rx_count += len(data)
         self.rx_count_label.setText(str(self.rx_count))
 
-        # 添加时间戳和标记
+        # 添加数据到缓冲区，而不是立即更新UI
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        self.data_buffer.append((data, timestamp))
         
+        # 如果缓冲区达到最大大小，立即处理防止数据堆积
+        if len(self.data_buffer) >= self.max_buffer_size:
+            self.flush_data_buffer()
+    
+    def flush_data_buffer(self):
+        """批量处理缓冲区中的数据，优化UI更新性能"""
+        if not self.data_buffer:
+            return
+            
+        # 每处理100次数据才检查一次文本长度，减少性能开销
+        if not hasattr(self, '_flush_count'):
+            self._flush_count = 0
+        self._flush_count += 1
+        
+        if self._flush_count % 100 == 0:
+            current_text = self.receive_text.toPlainText()
+            max_lines = 1000  # 最大行数限制
+            if current_text.count('\n') > max_lines:
+                # 保留最后500行
+                lines = current_text.split('\n')
+                self.receive_text.clear()
+                self.receive_text.insertPlainText('\n'.join(lines[-500:]) + '\n')
+        
+        # 批量更新UI，减少重绘次数
+        self.receive_text.setUpdatesEnabled(False)
+        
+        # 批量构建所有数据的显示内容，减少UI操作次数
         if self.hex_recv_check.isChecked():
-            # 十六进制显示
-            hex_list = [f"{byte:02X}" for byte in data]
-            # 构建带时间戳的完整HTML文本
-            html_text = f"[{timestamp}] [接收] "
-            for hex_byte in hex_list:
-                if hex_byte == "5A":
-                    html_text += f'<span style="color: green;">{hex_byte}</span> '
-                elif hex_byte == "EB":
-                    html_text += f'<span style="color: red;">{hex_byte}</span> '
-                else:
-                    html_text += f"{hex_byte} "
-            html_text += "<br>"
+            # 十六进制显示 - 批量处理所有数据
+            all_html_parts = []
+            for data, timestamp in self.data_buffer:
+                hex_list = [f"{byte:02X}" for byte in data]
+                html_parts = [f"[{timestamp}] [接收] "]
+                
+                # 优化颜色标记处理
+                for hex_byte in hex_list:
+                    if hex_byte == "5A":
+                        html_parts.append(f'<span style="color: green;">{hex_byte}</span> ')
+                    elif hex_byte == "EB":
+                        html_parts.append(f'<span style="color: red;">{hex_byte}</span> ')
+                    else:
+                        html_parts.append(f"{hex_byte} ")
+                html_parts.append("<br>")
+                all_html_parts.extend(html_parts)
             
-            # 更新显示
-            self.receive_text.moveCursor(QTextCursor.End)
-            self.receive_text.insertHtml(html_text)
+            # 一次性插入所有HTML内容
+            if all_html_parts:
+                self.receive_text.moveCursor(QTextCursor.End)
+                self.receive_text.insertHtml(''.join(all_html_parts))
         else:
-            # 字符串显示
-            try:
-                text = data.decode('utf-8', errors='replace')
-            except:
-                text = str(data)
+            # 文本显示 - 批量处理所有数据
+            all_text_parts = []
+            for data, timestamp in self.data_buffer:
+                try:
+                    text = data.decode('utf-8', errors='replace')
+                except:
+                    text = str(data)
+                all_text_parts.append(f"[{timestamp}] [接收] {text}\n")
             
-            text = f"[{timestamp}] [接收] {text}\n"
-            
-            # 更新显示
-            self.receive_text.moveCursor(QTextCursor.End)
-            self.receive_text.insertPlainText(text)
-
+            # 一次性插入所有文本内容
+            if all_text_parts:
+                self.receive_text.moveCursor(QTextCursor.End)
+                self.receive_text.insertPlainText(''.join(all_text_parts))
+        
+        # 恢复UI更新
+        self.receive_text.setUpdatesEnabled(True)
+        
         # 自动滚屏
         if self.auto_scroll_check.isChecked():
             self.receive_text.moveCursor(QTextCursor.End)
+            
+        # 清空缓冲区
+        self.data_buffer.clear()
 
     def update_display_mode(self):
         """更新显示模式"""
@@ -1175,17 +1223,23 @@ class AdvancedSerialTool(QMainWindow):
                     # 根据复选框状态计算CRC16
                     if self.crc16_check.isChecked():
                         crc = self.crc16(data)
-                        crc_bytes = crc.to_bytes(2, byteorder='little')
+                        crc_bytes = crc.to_bytes(2, byteorder='big')  # 调换字节位置：从little改为big
                         data += crc_bytes
                         print(data)
-                        text = data.hex().upper()
+                        # 格式化为带空格的十六进制显示
+                        hex_display = ' '.join([data.hex().upper()[i:i+2] for i in range(0, len(data.hex()), 2)])
+                        text = hex_display
                         self.crc16_label.setText(f"CRC16: {crc:04X}")
+                    else:
+                        # 格式化为带空格的十六进制显示
+                        hex_display = ' '.join([data.hex().upper()[i:i+2] for i in range(0, len(data.hex()), 2)])
+                        text = hex_display
                 else:
                     # 普通文本发送
                     # 根据复选框状态计算CRC16
                     if self.crc16_check.isChecked():
                         crc = self.crc16(text.encode('utf-8'))
-                        crc_bytes = crc.to_bytes(2, byteorder='little')
+                        crc_bytes = crc.to_bytes(2, byteorder='big')  # 调换字节位置：从little改为big
                         data = text.encode('utf-8') + crc_bytes
                         self.crc16_label.setText(f"CRC16: {crc:04X}")
                     else:
@@ -1340,9 +1394,12 @@ class AdvancedSerialTool(QMainWindow):
                         # 移除空格并转换为字节
                         hex_text = text.replace(' ', '')
                         data = bytes.fromhex(hex_text)
+                        # 格式化为带空格的十六进制显示
+                        display_text = ' '.join([data.hex().upper()[i:i+2] for i in range(0, len(data.hex()), 2)])
                     else:
                         # 普通文本发送
                         data = text.encode('utf-8')
+                        display_text = text
 
                     # 添加换行符
                     if self.crlf_check.isChecked():
@@ -1352,7 +1409,7 @@ class AdvancedSerialTool(QMainWindow):
                     self.ser.write(data)
 
                     # 更新状态栏
-                    self.statusBar.showMessage(f"已发送命令: {text}")
+                    self.statusBar.showMessage(f"已发送命令: {display_text}")
 
                     # 更新发送计数
                     self.tx_count += len(data)
@@ -1361,7 +1418,7 @@ class AdvancedSerialTool(QMainWindow):
                     # 回显发送内容
                     timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
                     self.receive_text.moveCursor(QTextCursor.End)
-                    self.receive_text.insertPlainText(f"[{timestamp}] [发送] {text}\r\n")
+                    self.receive_text.insertPlainText(f"[{timestamp}] [发送] {display_text}\r\n")
 
                     # 自动滚屏
                     if self.auto_scroll_check.isChecked():
@@ -1762,7 +1819,7 @@ class AdvancedSerialTool(QMainWindow):
             # 添加CRC16校验
             if self.multi_crc_check.isChecked():
                 crc = self.calculate_crc16(data)
-                data += crc.to_bytes(2, byteorder='little')
+                data += crc.to_bytes(2, byteorder='big')  # 调换字节位置：从little改为big
             
             # 添加换行符
             if self.multi_crlf_check.isChecked():
