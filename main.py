@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QSpinBox, QTabWidget, QListWidget, QSplitter, QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog)
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer
 from PyQt5.QtGui import QFont, QTextCursor, QColor
+from led_status_window import LEDStatusWindow
 
 
 class SerialThread(QThread):
@@ -81,9 +82,15 @@ class AdvancedSerialTool(QMainWindow):
         # 数据映射配置（I/O位映射）
         self.bit_mapping = {}
         self.bit_mapping_enabled = {}  # 存储每个映射是否启用
+        self.bit_mapping_latch = {}  # 存储每个映射是否启用自锁模式
+        self.bit_mapping_prev_values = {}  # 存储上一次的输入值，用于检测上升沿
+        self.bit_mapping_latch_states = {}  # 存储自锁模式下的输出状态
         for i in range(192):  # 24字节 * 8位，对应D0~D23
             self.bit_mapping[str(i)] = i  # 默认一一对应，使用字符串键
             self.bit_mapping_enabled[str(i)] = False  # 默认禁用所有映射，使用字符串键
+            self.bit_mapping_latch[str(i)] = False  # 默认禁用自锁模式
+            self.bit_mapping_prev_values[str(i)] = 0  # 初始化上一次值为0
+            self.bit_mapping_latch_states[str(i)] = 0  # 初始化自锁状态为0
 
         # 初始化 command_list
         self.command_list = QListWidget()
@@ -443,6 +450,11 @@ class AdvancedSerialTool(QMainWindow):
         command_generator_action = QAction("指令生成", self)
         command_generator_action.triggered.connect(self.open_command_generator_window)
         tool_menu.addAction(command_generator_action)
+        
+        # LED状态显示菜单项
+        led_status_action = QAction("LED状态显示", self)
+        led_status_action.triggered.connect(self.open_led_status_window)
+        tool_menu.addAction(led_status_action)
 
         # 帮助菜单
         help_menu = menubar.addMenu("帮助")
@@ -594,6 +606,28 @@ class AdvancedSerialTool(QMainWindow):
         if hasattr(self, 'serial_thread') and self.serial_thread:
             self.serial_thread.data_received.connect(self.signal_detection_window.data_received)
 
+    def open_led_status_window(self):
+        """打开LED状态显示窗口"""
+        # 如果窗口已存在，先关闭
+        if hasattr(self, 'led_status_window') and self.led_status_window:
+            self.led_status_window.close()
+            
+        # 创建LED状态窗口
+        self.led_status_window = LEDStatusWindow(self)
+        
+        # 为LED状态窗口添加布局记忆
+        self.load_sub_window_layout(self.led_status_window, 'led_status_window')
+        
+        # 添加关闭事件处理
+        def closeEvent(event):
+            self.save_sub_window_layout(self.led_status_window, 'led_status_window')
+            event.accept()
+        self.led_status_window.closeEvent = closeEvent
+        
+        # 加载自锁配置并显示窗口
+        self.led_status_window.load_latch_configuration()
+        self.led_status_window.show()
+
     def toggle_serial(self):
         """打开或关闭串口"""
         if self.ser and self.ser.is_open:
@@ -686,8 +720,12 @@ class AdvancedSerialTool(QMainWindow):
             self.multi_command_window.timer.stop()
             
         # 停止映射窗口定时器（如果存在）
-        if hasattr(self, 'mapping_window') and hasattr(self.mapping_window, 'timer_enable') and self.mapping_window.timer_enable.isChecked():
-            self.mapping_window.toggle_auto_send_status()
+        if hasattr(self, 'send_timer') and self.send_timer:
+            self.send_timer.stop()
+        if hasattr(self, '_is_auto_sending') and self._is_auto_sending:
+            self._is_auto_sending = False
+            if hasattr(self, 'timer_enable_btn'):
+                self.update_auto_send_button_style()
             
         # 处理事件循环，确保定时器完全停止
         QApplication.processEvents()
@@ -816,6 +854,14 @@ class AdvancedSerialTool(QMainWindow):
             ))
             item_layout.addWidget(enable_check)
 
+            # 自锁复选框
+            latch_check = QCheckBox('自锁')
+            latch_check.setChecked(False)
+            latch_check.setObjectName(f"latch_check_{i}")  # 设置对象名，用于findChild查找
+            latch_check.stateChanged.connect(lambda state, row=i: self.toggle_latch_mode(row, state))
+            latch_check.setToolTip('启用自锁模式：检测上升沿切换输出状态')
+            item_layout.addWidget(latch_check)
+
             # 当前值
             value_label = QLabel('0')
             value_label.setFixedWidth(30)
@@ -823,9 +869,9 @@ class AdvancedSerialTool(QMainWindow):
             item_layout.addWidget(value_label)
 
             # 将映射项添加到网格布局中
-            col = (i % 2) * 4  # 两列，每列4个控件
+            col = (i % 2) * 5  # 两列，每列5个控件（增加了自锁复选框）
             row = i // 2
-            self.mapping_grid_layout.addLayout(item_layout, row, col, 1, 4) # 跨4列以容纳所有控件
+            self.mapping_grid_layout.addLayout(item_layout, row, col, 1, 5) # 跨5列以容纳所有控件
 
         # 存储对当前值标签的引用，以便后续更新
         self.mapping_value_labels = []
@@ -897,6 +943,72 @@ class AdvancedSerialTool(QMainWindow):
         # 更新已启用映射列表
         self.update_enabled_mappings_list()
 
+    def toggle_latch_mode(self, bit, enabled):
+        """切换自锁模式状态"""
+        self.bit_mapping_latch[str(bit)] = enabled
+        # 重置自锁状态和上一次值
+        if enabled:
+            self.bit_mapping_latch_states[str(bit)] = 0
+            self.bit_mapping_prev_values[str(bit)] = 0
+            
+    def process_latch_mode(self, data):
+        """处理自锁模式 - 检测上升沿并切换输出状态"""
+        if len(data) < 24:  # 确保数据长度足够（24字节对应192位）
+            return
+            
+        # 遍历所有启用自锁模式的映射
+        for bit_str, is_latch_enabled in self.bit_mapping_latch.items():
+            if not is_latch_enabled:
+                continue
+                
+            bit = int(bit_str)
+            byte_index = bit // 8
+            bit_index = bit % 8
+            
+            if byte_index >= len(data):
+                continue
+                
+            # 获取当前位的值
+            current_value = (data[byte_index] >> bit_index) & 1
+            prev_value = self.bit_mapping_prev_values[bit_str]
+            
+            # 检测上升沿（从0变为1）
+            if prev_value == 0 and current_value == 1:
+                # 切换输出状态
+                self.bit_mapping_latch_states[bit_str] = 1 - self.bit_mapping_latch_states[bit_str]
+                
+                # 如果该位的映射也启用了，需要更新输出数据
+                if self.bit_mapping_enabled.get(bit_str, False):
+                    output_bit = self.bit_mapping.get(bit_str, bit)
+                    self.update_output_bit(output_bit, self.bit_mapping_latch_states[bit_str])
+            
+            # 更新上一次的值
+            self.bit_mapping_prev_values[bit_str] = current_value
+            
+    def update_output_bit(self, output_bit, value):
+        """更新输出位的值并发送数据"""
+        try:
+            # 构造输出数据（24字节，192位）
+            output_data = bytearray(24)
+            
+            # 设置指定位的值
+            byte_index = output_bit // 8
+            bit_index = output_bit % 8
+            
+            if value:
+                output_data[byte_index] |= (1 << bit_index)
+            else:
+                output_data[byte_index] &= ~(1 << bit_index)
+                
+            # 发送输出数据
+            if self.ser and self.ser.is_open:
+                self.ser.write(output_data)
+                self.tx_count += len(output_data)
+                self.tx_count_label.setText(str(self.tx_count))
+                
+        except Exception as e:
+            print(f"更新输出位时出错: {e}")
+
     def update_enabled_mappings_list(self):
         """更新已启用映射列表"""
         if not hasattr(self, 'enabled_mappings_list'): # Ensure the list widget exists
@@ -906,7 +1018,12 @@ class AdvancedSerialTool(QMainWindow):
             if enabled:
                 # Find the corresponding output bit from self.bit_mapping
                 output_bit = self.bit_mapping.get(str(bit), bit) # Default to input bit if not found
-                self.enabled_mappings_list.addItem(f'I{bit} -> O{output_bit}')
+                
+                # 检查是否启用了自锁模式
+                latch_enabled = self.bit_mapping_latch.get(str(bit), False)
+                latch_indicator = ' 🔒' if latch_enabled else ''
+                
+                self.enabled_mappings_list.addItem(f'I{bit} -> O{output_bit}{latch_indicator}')
         
     def toggle_auto_send_status(self):
         """切换定时发送按钮状态并执行相应操作"""
@@ -926,6 +1043,13 @@ class AdvancedSerialTool(QMainWindow):
     def perform_auto_send_action(self):
         """根据当前状态启动或停止定时发送"""
         if self._is_auto_sending:
+            # 检查串口状态
+            if not self.ser or not self.ser.is_open:
+                QMessageBox.warning(self, "警告", "请先打开串口")
+                self._is_auto_sending = False
+                self.update_auto_send_button_style()
+                return
+                
             # 启动定时器
             interval = self.timer_interval.value()
             if not hasattr(self, 'send_timer') or not self.send_timer:
@@ -939,13 +1063,30 @@ class AdvancedSerialTool(QMainWindow):
                 
     def auto_send_data(self):
         """定时发送数据"""
+        # 检查串口状态
+        if not self.ser or not self.ser.is_open:
+            # 串口已关闭，停止定时发送
+            if hasattr(self, 'send_timer') and self.send_timer:
+                self.send_timer.stop()
+            self._is_auto_sending = False
+            self.update_auto_send_button_style()
+            return
+            
         if hasattr(self, 'last_received_data') and self.last_received_data:
-            # 处理数据并发送
-            processed_data = self.convert_data(self.last_received_data)
-            if processed_data:
-                self.ser.write(processed_data)
-                # 更新映射表格中的当前值
-                self.update_mapping_values(processed_data)
+            try:
+                # 处理数据并发送
+                processed_data = self.convert_data(self.last_received_data)
+                if processed_data:
+                    self.ser.write(processed_data)
+                    # 更新映射表格中的当前值
+                    self.update_mapping_values(processed_data)
+            except Exception as e:
+                print(f"定时发送数据时出错: {e}")
+                # 发生错误时停止定时发送
+                if hasattr(self, 'send_timer') and self.send_timer:
+                    self.send_timer.stop()
+                self._is_auto_sending = False
+                self.update_auto_send_button_style()
 
     def save_mapping_config(self):
         """保存映射配置到文件"""
@@ -955,7 +1096,10 @@ class AdvancedSerialTool(QMainWindow):
             try:
                 config = {
                     'mapping': self.bit_mapping,
-                    'enabled': self.bit_mapping_enabled
+                    'enabled': self.bit_mapping_enabled,
+                    'latch': self.bit_mapping_latch,
+                    'latch_states': self.bit_mapping_latch_states,
+                    'prev_values': self.bit_mapping_prev_values
                 }
                 with open(file_name, 'w') as f:
                     json.dump(config, f)
@@ -973,6 +1117,19 @@ class AdvancedSerialTool(QMainWindow):
                     config = json.load(f)
                     self.bit_mapping = config.get('mapping', {})
                     self.bit_mapping_enabled = config.get('enabled', {})
+                    self.bit_mapping_latch = config.get('latch', {})
+                    self.bit_mapping_latch_states = config.get('latch_states', {})
+                    self.bit_mapping_prev_values = config.get('prev_values', {})
+                    
+                    # 确保所有位都有默认值
+                    for i in range(192):
+                        bit_str = str(i)
+                        if bit_str not in self.bit_mapping_latch:
+                            self.bit_mapping_latch[bit_str] = False
+                        if bit_str not in self.bit_mapping_latch_states:
+                            self.bit_mapping_latch_states[bit_str] = 0
+                        if bit_str not in self.bit_mapping_prev_values:
+                            self.bit_mapping_prev_values[bit_str] = 0
 
                 # 更新UI
                 for i in range(192):
@@ -980,13 +1137,22 @@ class AdvancedSerialTool(QMainWindow):
                     spin_box = self.findChild(QSpinBox, f"output_spin_{i}")
                     if spin_box:
                         spin_box.setValue(self.bit_mapping.get(str(i), i))
-                    # 更新CheckBox的状态
-                    check_box = self.findChild(QCheckBox, f"enable_check_{i}")
-                    if check_box:
-                        check_box.setChecked(self.bit_mapping_enabled.get(str(i), False))
+                    # 更新启用CheckBox的状态
+                    enable_check_box = self.findChild(QCheckBox, f"enable_check_{i}")
+                    if enable_check_box:
+                        enable_check_box.setChecked(self.bit_mapping_enabled.get(str(i), False))
+                    # 更新自锁CheckBox的状态
+                    latch_check_box = self.findChild(QCheckBox, f"latch_check_{i}")
+                    if latch_check_box:
+                        latch_check_box.setChecked(self.bit_mapping_latch.get(str(i), False))
                 
                 # 更新已启用映射列表
                 self.update_enabled_mappings_list()
+
+                # 检查是否有自锁位，如果有则打开LED状态显示窗口
+                has_latch_bits = any(self.bit_mapping_latch.values())
+                if has_latch_bits:
+                    self.open_led_status_window()
 
                 QMessageBox.information(self, "成功", "映射配置已加载")
             except Exception as e:
@@ -1033,26 +1199,64 @@ class AdvancedSerialTool(QMainWindow):
         
         # 优化：直接处理字节，避免位列表转换
         for input_pos, output_pos in enabled_mappings.items():
-            # 计算输入位所在的字节和位置
-            input_byte_index = input_pos // 8
-            input_bit_index = 7 - (input_pos % 8)  # 从左到右递增
+            input_pos_str = str(input_pos)
             
-            # 确保输入字节索引在有效范围内
-            if input_byte_index < len(remaining_data):
-                # 获取输入位的值
-                input_bit_value = (remaining_data[input_byte_index] >> input_bit_index) & 1
+            # 检查是否启用了自锁模式
+            if self.bit_mapping_latch.get(input_pos_str, False):
+                # 自锁模式：处理上升沿检测
+                input_byte_index = input_pos // 8
+                input_bit_index = 7 - (input_pos % 8)  # 从左到右递增
                 
-                # 计算输出位所在的字节和位置
-                output_byte_index = output_pos // 8
-                output_bit_index = 7 - (output_pos % 8)  # 从左到右递增
+                # 确保输入字节索引在有效范围内
+                if input_byte_index < len(remaining_data):
+                    # 获取当前输入位的值
+                    current_input_value = (remaining_data[input_byte_index] >> input_bit_index) & 1
+                    prev_value = self.bit_mapping_prev_values.get(input_pos_str, 0)
+                    
+                    # 检测上升沿（从0变为1）
+                    if prev_value == 0 and current_input_value == 1:
+                        # 切换自锁状态
+                        current_latch_state = self.bit_mapping_latch_states.get(input_pos_str, 0)
+                        self.bit_mapping_latch_states[input_pos_str] = 1 - current_latch_state
+                    
+                    # 更新上一次的值
+                    self.bit_mapping_prev_values[input_pos_str] = current_input_value
+                    
+                    # 使用自锁状态作为输出值
+                    output_bit_value = self.bit_mapping_latch_states.get(input_pos_str, 0)
+                    
+                    # 计算输出位所在的字节和位置
+                    output_byte_index = output_pos // 8
+                    output_bit_index = 7 - (output_pos % 8)  # 从左到右递增
+                    
+                    # 如果输出字节索引在有效范围内
+                    if 0 <= output_byte_index < 24:
+                        # 设置对应位的值
+                        if output_bit_value == 1:
+                            output_bytes[output_byte_index] |= (1 << output_bit_index)
+                        else:
+                            output_bytes[output_byte_index] &= ~(1 << output_bit_index)
+            else:
+                # 普通模式：直接映射输入到输出
+                input_byte_index = input_pos // 8
+                input_bit_index = 7 - (input_pos % 8)  # 从左到右递增
                 
-                # 如果输出字节索引在有效范围内
-                if 0 <= output_byte_index < 24:
-                    # 设置对应位的值
-                    if input_bit_value == 1:
-                        output_bytes[output_byte_index] |= (1 << output_bit_index)
-                    else:
-                        output_bytes[output_byte_index] &= ~(1 << output_bit_index)
+                # 确保输入字节索引在有效范围内
+                if input_byte_index < len(remaining_data):
+                    # 获取输入位的值
+                    input_bit_value = (remaining_data[input_byte_index] >> input_bit_index) & 1
+                    
+                    # 计算输出位所在的字节和位置
+                    output_byte_index = output_pos // 8
+                    output_bit_index = 7 - (output_pos % 8)  # 从左到右递增
+                    
+                    # 如果输出字节索引在有效范围内
+                    if 0 <= output_byte_index < 24:
+                        # 设置对应位的值
+                        if input_bit_value == 1:
+                            output_bytes[output_byte_index] |= (1 << output_bit_index)
+                        else:
+                            output_bytes[output_byte_index] &= ~(1 << output_bit_index)
         
         # 将输出字节添加到输出数据中
         output_data.extend(output_bytes)
@@ -2542,8 +2746,29 @@ if __name__ == "__main__":
         font.setPointSize(10)
         app.setFont(font)
 
+        # 显示启动动画
+        from splash_screen import AnimatedSplashScreen
+        splash = AnimatedSplashScreen()
+        splash.show()
+        splash.start_animation()
+        
+        # 等待动画完成（2秒）
+        import time
+        start_time = time.time()
+        while splash.isVisible() and time.time() - start_time < 2.5:  # 最多等待2.5秒
+            app.processEvents()
+            time.sleep(0.01)
+            # 检查动画是否完成
+            if splash.is_animation_completed():
+                break
+        
+        # 创建并显示主窗口
         window = AdvancedSerialTool()
+        
+        # 关闭启动动画并显示主窗口
+        splash.close()
         window.show()
+        
         sys.exit(app.exec_())
 
 

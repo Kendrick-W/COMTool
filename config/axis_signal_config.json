@@ -1,0 +1,38 @@
+{
+  "axis_signals": {
+    "X": {
+      "address": "71",
+      "enabled": true
+    },
+    "Y": {
+      "address": "70",
+      "enabled": true
+    },
+    "Z": {
+      "address": "69",
+      "enabled": true
+    },
+    "4": {
+      "address": "68",
+      "enabled": true
+    },
+    "5": {
+      "address": "",
+      "enabled": false
+    }
+  },
+  "multiplier_signals": {
+    "x1": {
+      "address": "67",
+      "enabled": true
+    },
+    "x10": {
+      "address": "",
+      "enabled": false
+    },
+    "x100": {
+      "address": "",
+      "enabled": false
+    }
+  }
+}
