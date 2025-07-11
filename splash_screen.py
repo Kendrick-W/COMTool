@@ -241,10 +241,10 @@ class AnimatedSplashScreen(QSplashScreen):
             glow_gradient.setColorAt(1, QColor(255, 102, 0, 0))
             painter.fillRect(rect, QBrush(glow_gradient))
         
-        # 添加动态边框
-        border_color = QColor(100, 149, 237, int(150 + 105 * self._glow_intensity))
-        painter.setPen(QPen(border_color, 3))
-        painter.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 15, 15)
+        # 移除边框绘制
+        # border_color = QColor(100, 149, 237, int(150 + 105 * self._glow_intensity))
+        # painter.setPen(QPen(border_color, 3))
+        # painter.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 15, 15)
         
     def draw_particles(self, painter):
         """绘制粒子效果"""
