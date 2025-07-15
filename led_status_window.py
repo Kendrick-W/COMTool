@@ -108,7 +108,7 @@ class LEDStatusWindow(QWidget):
         self.latch_bits = []  # 存储自锁位列表
         
         self.setWindowTitle('LED状态显示')
-        self.setGeometry(200, 200, 1050, 600)  # 增加宽度以适应侧边栏
+        self.setGeometry(200, 200, 1100, 600)  # 增加宽度以适应侧边栏和确保倍率监控完全显示
         
         # 设置窗口属性
         self.setWindowFlags(Qt.Window | Qt.WindowCloseButtonHint | Qt.WindowMinimizeButtonHint)
@@ -325,7 +325,8 @@ class LEDStatusWindow(QWidget):
             
             # 倍率标签（不可点击）
             multiplier_label = QLabel(multiplier)
-            multiplier_label.setFixedSize(40, 25)
+            # 增加宽度以确保x100能够完全显示
+            multiplier_label.setFixedSize(50, 25)
             multiplier_label.setStyleSheet('''
                 QLabel {
                     background-color: #e9ecef;
@@ -400,20 +401,20 @@ class LEDStatusWindow(QWidget):
         sidebar_layout.setSpacing(10)
         
         # 侧边栏标题
-        sidebar_title = QLabel('信号监控配置')
-        sidebar_title.setAlignment(Qt.AlignCenter)
-        sidebar_title.setStyleSheet('''
-            QLabel {
-                font-size: 14px;
-                font-weight: bold;
-                color: #333;
-                background-color: #e9ecef;
-                padding: 8px;
-                border-radius: 5px;
-                margin-bottom: 10px;
-            }
-        ''')
-        sidebar_layout.addWidget(sidebar_title)
+        # sidebar_title = QLabel('信号监控配置')
+        # sidebar_title.setAlignment(Qt.AlignCenter)
+        # sidebar_title.setStyleSheet('''
+        #     QLabel {
+        #         font-size: 14px;
+        #         font-weight: bold;
+        #         color: #333;
+        #         background-color: #e9ecef;
+        #         padding: 8px;
+        #         border-radius: 5px;
+        #         margin-bottom: 10px;
+        #     }
+        # ''')
+        # sidebar_layout.addWidget(sidebar_title)
         
         # 轴选配置区域标题
         axis_section_title = QLabel('轴选信号配置')
