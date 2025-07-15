@@ -399,31 +399,31 @@ class LEDStatusWindow(QWidget):
         sidebar_layout.setContentsMargins(10, 10, 10, 10)
         sidebar_layout.setSpacing(10)
         
-        # # 侧边栏标题
-        # sidebar_title = QLabel('信号监控配置')
-        # sidebar_title.setAlignment(Qt.AlignCenter)
-        # sidebar_title.setStyleSheet('''
-        #     QLabel {
-        #         font-size: 14px;
-        #         font-weight: bold;
-        #         color: #333;
-        #         background-color: #e9ecef;
-        #         padding: 8px;
-        #         border-radius: 5px;
-        #         margin-bottom: 10px;
-        #     }
-        # ''')
-        # sidebar_layout.addWidget(sidebar_title)
+        # 侧边栏标题
+        sidebar_title = QLabel('信号监控配置')
+        sidebar_title.setAlignment(Qt.AlignCenter)
+        sidebar_title.setStyleSheet('''
+            QLabel {
+                font-size: 14px;
+                font-weight: bold;
+                color: #333;
+                background-color: #e9ecef;
+                padding: 8px;
+                border-radius: 5px;
+                margin-bottom: 10px;
+            }
+        ''')
+        sidebar_layout.addWidget(sidebar_title)
         
         # 轴选配置区域标题
         axis_section_title = QLabel('轴选信号配置')
         axis_section_title.setStyleSheet('color: #495057; font-size: 13px; font-weight: bold; margin-top: 5px; margin-bottom: 5px;')
         sidebar_layout.addWidget(axis_section_title)
         
-        # # 说明文字
-        # info_text = QLabel('设置各轴选信号对应的I地址:')
-        # info_text.setStyleSheet('color: #666; font-size: 12px; margin-bottom: 5px;')
-        # sidebar_layout.addWidget(info_text)
+        # 说明文字
+        info_text = QLabel('设置各轴选信号对应的I地址:')
+        info_text.setStyleSheet('color: #666; font-size: 12px; margin-bottom: 5px;')
+        sidebar_layout.addWidget(info_text)
         
         # 创建表格配置区域
         table_frame = QFrame()
@@ -563,10 +563,10 @@ class LEDStatusWindow(QWidget):
         multiplier_section_title.setStyleSheet('color: #495057; font-size: 13px; font-weight: bold; margin-top: 15px; margin-bottom: 5px;')
         sidebar_layout.addWidget(multiplier_section_title)
         
-        # # 倍率说明文字
-        # multiplier_info_text = QLabel('设置各倍率信号对应的I地址:')
-        # multiplier_info_text.setStyleSheet('color: #666; font-size: 12px; margin-bottom: 5px;')
-        # sidebar_layout.addWidget(multiplier_info_text)
+        # 倍率说明文字
+        multiplier_info_text = QLabel('设置各倍率信号对应的I地址:')
+        multiplier_info_text.setStyleSheet('color: #666; font-size: 12px; margin-bottom: 5px;')
+        sidebar_layout.addWidget(multiplier_info_text)
         
         # 创建倍率配置表格区域
         multiplier_table_frame = QFrame()
