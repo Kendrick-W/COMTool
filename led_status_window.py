@@ -71,21 +71,23 @@ class LEDIndicator(QLabel):
     def update_appearance(self):
         """更新LED外观"""
         if self.state == 1:
-            # 绿色圆圈表示开启
+            # 开启状态 - 绿色LED带发光效果
             self.setStyleSheet("""
                 QLabel {
-                    background-color: #4CAF50;
-                    border: none;
+                    background: qradialgradient(cx:0.5, cy:0.3, radius:0.8,
+                        stop:0 #66FF66, stop:0.3 #4CAF50, stop:1 #2E7D32);
+                    border: 2px solid #1B5E20;
                     border-radius: 15px;
                 }
             """)
             self.setText("")
         else:
-            # 透明圆圈表示关闭
+            # 关闭状态 - 暗灰色LED
             self.setStyleSheet("""
                 QLabel {
-                    background-color: transparent;
-                    border: 2px solid #CCCCCC;
+                    background: qradialgradient(cx:0.5, cy:0.3, radius:0.8,
+                        stop:0 #666666, stop:0.3 #424242, stop:1 #212121);
+                    border: 2px solid #424242;
                     border-radius: 15px;
                 }
             """)
@@ -105,7 +107,7 @@ class LEDStatusWindow(QWidget):
         self.led_indicators = {}  # 存储LED指示器
         self.latch_bits = []  # 存储自锁位列表
         
-        self.setWindowTitle('自锁位LED状态显示')
+        self.setWindowTitle('LED状态显示')
         self.setGeometry(200, 200, 1050, 600)  # 增加宽度以适应侧边栏
         
         # 设置窗口属性
@@ -125,7 +127,7 @@ class LEDStatusWindow(QWidget):
         main_layout = QVBoxLayout()
         
         # 标题
-        title_label = QLabel('自锁位LED状态显示')
+        title_label = QLabel('LED状态显示')
         title_label.setAlignment(Qt.AlignCenter)
         title_font = QFont()
         title_font.setPointSize(16)
@@ -134,7 +136,7 @@ class LEDStatusWindow(QWidget):
         main_layout.addWidget(title_label)
         
         # 说明文字
-        info_label = QLabel('绿色●表示自锁位开启，灰色○表示自锁位关闭')
+        info_label = QLabel('')
         info_label.setAlignment(Qt.AlignCenter)
         info_label.setStyleSheet('color: #666; margin: 10px;')
         main_layout.addWidget(info_label)
@@ -397,31 +399,31 @@ class LEDStatusWindow(QWidget):
         sidebar_layout.setContentsMargins(10, 10, 10, 10)
         sidebar_layout.setSpacing(10)
         
-        # 侧边栏标题
-        sidebar_title = QLabel('信号监控配置')
-        sidebar_title.setAlignment(Qt.AlignCenter)
-        sidebar_title.setStyleSheet('''
-            QLabel {
-                font-size: 14px;
-                font-weight: bold;
-                color: #333;
-                background-color: #e9ecef;
-                padding: 8px;
-                border-radius: 5px;
-                margin-bottom: 10px;
-            }
-        ''')
-        sidebar_layout.addWidget(sidebar_title)
+        # # 侧边栏标题
+        # sidebar_title = QLabel('信号监控配置')
+        # sidebar_title.setAlignment(Qt.AlignCenter)
+        # sidebar_title.setStyleSheet('''
+        #     QLabel {
+        #         font-size: 14px;
+        #         font-weight: bold;
+        #         color: #333;
+        #         background-color: #e9ecef;
+        #         padding: 8px;
+        #         border-radius: 5px;
+        #         margin-bottom: 10px;
+        #     }
+        # ''')
+        # sidebar_layout.addWidget(sidebar_title)
         
         # 轴选配置区域标题
         axis_section_title = QLabel('轴选信号配置')
         axis_section_title.setStyleSheet('color: #495057; font-size: 13px; font-weight: bold; margin-top: 5px; margin-bottom: 5px;')
         sidebar_layout.addWidget(axis_section_title)
         
-        # 说明文字
-        info_text = QLabel('设置各轴选信号对应的I地址:')
-        info_text.setStyleSheet('color: #666; font-size: 12px; margin-bottom: 5px;')
-        sidebar_layout.addWidget(info_text)
+        # # 说明文字
+        # info_text = QLabel('设置各轴选信号对应的I地址:')
+        # info_text.setStyleSheet('color: #666; font-size: 12px; margin-bottom: 5px;')
+        # sidebar_layout.addWidget(info_text)
         
         # 创建表格配置区域
         table_frame = QFrame()
@@ -561,10 +563,10 @@ class LEDStatusWindow(QWidget):
         multiplier_section_title.setStyleSheet('color: #495057; font-size: 13px; font-weight: bold; margin-top: 15px; margin-bottom: 5px;')
         sidebar_layout.addWidget(multiplier_section_title)
         
-        # 倍率说明文字
-        multiplier_info_text = QLabel('设置各倍率信号对应的I地址:')
-        multiplier_info_text.setStyleSheet('color: #666; font-size: 12px; margin-bottom: 5px;')
-        sidebar_layout.addWidget(multiplier_info_text)
+        # # 倍率说明文字
+        # multiplier_info_text = QLabel('设置各倍率信号对应的I地址:')
+        # multiplier_info_text.setStyleSheet('color: #666; font-size: 12px; margin-bottom: 5px;')
+        # sidebar_layout.addWidget(multiplier_info_text)
         
         # 创建倍率配置表格区域
         multiplier_table_frame = QFrame()

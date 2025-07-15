@@ -83,12 +83,12 @@ class AnimatedSplashScreen(QSplashScreen):
         self.opacity_animation.setEndValue(1.0)
         self.opacity_animation.setEasingCurve(QEasingCurve.OutCubic)
         
-        # Logo缩放动画
+        # Logo缩放动画 - 改为平滑渐入效果
         self.scale_animation = QPropertyAnimation(self, b"logo_scale")
-        self.scale_animation.setDuration(2000)
-        self.scale_animation.setStartValue(0.3)
+        self.scale_animation.setDuration(1000)
+        self.scale_animation.setStartValue(0.8)
         self.scale_animation.setEndValue(1.0)
-        self.scale_animation.setEasingCurve(QEasingCurve.OutElastic)
+        self.scale_animation.setEasingCurve(QEasingCurve.OutCubic)
         
         # 文字偏移动画
         self.text_animation = QPropertyAnimation(self, b"text_offset")
@@ -420,7 +420,7 @@ class AnimatedSplashScreen(QSplashScreen):
         painter.setFont(QFont("Microsoft YaHei", 10))
         painter.setPen(QColor(150, 150, 150))
         version_y = int(product_y + 35)
-        painter.drawText(QRect(0, version_y, self.width(), 15), Qt.AlignCenter, "专业串口调试工具 v2.0")
+        painter.drawText(QRect(0, version_y, self.width(), 15), Qt.AlignCenter, "串口调试工具 v1.0")
         
 
 def show_splash_screen():

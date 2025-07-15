@@ -1126,8 +1126,8 @@ class AdvancedSerialTool(QMainWindow):
                         bit_str = str(i)
                         if bit_str not in self.bit_mapping_latch:
                             self.bit_mapping_latch[bit_str] = False
-                        if bit_str not in self.bit_mapping_latch_states:
-                            self.bit_mapping_latch_states[bit_str] = 0
+                        # 重置所有自锁状态为0（加载配置后清零）
+                        self.bit_mapping_latch_states[bit_str] = 0
                         if bit_str not in self.bit_mapping_prev_values:
                             self.bit_mapping_prev_values[bit_str] = 0
 
